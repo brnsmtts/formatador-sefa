@@ -1,0 +1,15 @@
+# Tabela de links de legislação (Links de Legislação - SEFA/PA)
+# Formato: Tipo|Número|Ano[|Esfera]<TAB>endereço  (número sem pontos; ano com 4 dígitos ou vazio;
+# Esfera = Federal, Estadual ou CGIBS, só quando a citação diz a esfera)
+# Pode editar à mão: as linhas daqui têm prioridade sobre a busca no site.
+Portaria|1726|2016	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=1726&ano=2016&ordenacao=MAIS_RECENTES&idAto=58941
+Decreto|1604|2005	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=1604&ano=2005&ordenacao=MAIS_RECENTES&idAto=60388
+Lei Complementar|87|1996	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=87&ano=1996&ordenacao=MAIS_RECENTES&idAto=60660
+Lei|5530|1989	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=5530&ano=1989&ordenacao=MAIS_RECENTES&idAto=105
+Decreto|2057|2018	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=2057&ano=2018&ordenacao=MAIS_RECENTES&idAto=56709
+Constituição|||Estadual	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&ano=1989&ordenacao=MAIS_RECENTES&idAto=48
+Lei Complementar|63|1990|Federal	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=63&ano=1990&ordenacao=MAIS_RECENTES&idAto=60658
+Lei|9674|2022|Estadual	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=9674&ano=2022&ordenacao=MAIS_RECENTES&idAto=58011
+Decreto|2838|2022|Estadual	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=2838&ano=2022&ordenacao=MAIS_RECENTES&idAto=56966
+Lei Complementar|78|2011|Estadual	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=78&ano=2011&ordenacao=MAIS_RECENTES&idAto=57728
+Decreto|1954|2018|Estadual	https://app.sefa.pa.gov.br/busca-legislacao/buscar-legislacoes/buscar/resultados/visualizacao?idStatus=3&numeroAto=1954&ano=2018&ordenacao=MAIS_RECENTES&idAto=56695
