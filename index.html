@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formatador SEFA · importar ato do PDF</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='3' width='20' height='26' rx='2' fill='%231D2A44'/><rect x='10' y='9' width='12' height='2.4' fill='%23FFE680'/><rect x='10' y='14' width='12' height='1.6' fill='white'/><rect x='10' y='18' width='9' height='1.6' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap">
+<style>
+:root {
+  --mesa: #E3E6E1;
+  --papel: #FFFFFF;
+  --tinta: #1D2A44;
+  --tinta-2: #2D3F63;
+  --grafite: #56606E;
+  --linha: #C9CEC6;
+  --marca: #FFE680;
+  --marca-borda: #D9B300;
+  --verde: #2E6B4E;
+  --verde-fundo: #E3F0E8;
+  --vermelho: #A4262C;
+  --vermelho-fundo: #FBE6E4;
+  --sans: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --serif: "Newsreader", Cambria, Georgia, serif;
+  --raio: 6px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--mesa);
+  color: var(--tinta);
+  font: 15px/1.5 var(--sans);
+  min-height: 100vh;
+}
+:is(button, input, select, textarea):not(.editor-word *) { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--tinta-2); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+/* Cabeçalho */
+.topo {
+  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  padding: 14px 28px; background: var(--papel); border-bottom: 1px solid var(--linha);
+}
+.topo h1 { margin: 0; font: 600 23px/1.2 var(--serif); letter-spacing: .005em; }
+.topo .sub { color: var(--grafite); }
+.motor { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--grafite); font-size: 14px; }
+.motor .ponto { width: 9px; height: 9px; border-radius: 50%; background: var(--marca-borda); flex: none; }
+.motor[data-estado="pronto"] .ponto { background: var(--verde); }
+.motor[data-estado="falha"] .ponto { background: var(--vermelho); }
+.motor[data-estado="carregando"] .ponto { animation: pulsar 1.2s ease-in-out infinite; }
+@keyframes pulsar { 50% { opacity: .25; } }
+
+/* Grade principal */
+.grade {
+  display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 24px; padding: 24px 28px 48px; align-items: start;
+}
+@media (max-width: 920px) { .grade { grid-template-columns: 1fr; padding: 16px; } .topo { padding: 12px 16px; } }
+
+/* Passos */
+.passos { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; }
+@media (max-width: 920px) { .passos { position: static; } }
+.passo {
+  background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio);
+  padding: 16px 18px 18px;
+}
+.passo h2 {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 0 0 12px; font: 700 15px/1.3 var(--sans);
+}
+.passo h2 .n {
+  font: 600 19px/1 var(--serif); color: var(--grafite); min-width: 14px;
+}
+.passo[aria-disabled="true"] { opacity: .55; }
+label.campo { display: block; margin: 10px 0 4px; font-weight: 700; font-size: 14px; }
+:is(input[type="text"], input[type="number"], select, textarea):not(.editor-word *) {
+  width: 100%; padding: 8px 10px; border: 1px solid #A9B0A6; border-radius: 4px; background: var(--papel);
+}
+input[type="number"]:not(.editor-word *) { width: 6.5em; }
+.dica { margin: 4px 0 0; color: var(--grafite); font-size: 13.5px; }
+
+.soltar {
+  display: block; border: 1.5px dashed #9AA39A; border-radius: var(--raio); padding: 18px 14px;
+  text-align: center; cursor: pointer; background: #F6F7F4;
+}
+.soltar:hover, .soltar.sobre { border-color: var(--tinta); background: #EEF1EC; }
+.soltar strong { display: block; }
+.soltar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.arquivo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--linha); border-radius: var(--raio); background: #F6F7F4; }
+.arquivo .nome { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 700; }
+.arquivo .tam { color: var(--grafite); font-size: 13px; font-weight: 400; }
+
+.botao {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 16px; border-radius: 4px; border: 1px solid var(--tinta); background: var(--papel);
+  color: var(--tinta); font-weight: 700; cursor: pointer;
+}
+.botao:hover { background: #EEF1F6; }
+.botao.principal { background: var(--tinta); color: #fff; }
+.botao.principal:hover { background: var(--tinta-2); }
+.botao.largo { width: 100%; margin-top: 14px; padding: 11px 16px; }
+.botao:disabled { cursor: not-allowed; opacity: .45; }
+.ligacao { background: none; border: 0; padding: 0; color: var(--tinta-2); text-decoration: underline; cursor: pointer; font-weight: 700; }
+
+/* Itens de conferência */
+.lista-conf { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lista-conf li { padding: 9px 11px; border-radius: 4px; border-left: 4px solid var(--linha); background: #F4F5F2; font-size: 14px; }
+.lista-conf li.pendente { border-left-color: var(--marca-borda); background: #FFF8D6; }
+.lista-conf li.ok { border-left-color: var(--verde); background: var(--verde-fundo); }
+.lista-conf li.bloqueio { border-left-color: var(--vermelho); background: var(--vermelho-fundo); }
+.lista-conf li .det { display: block; color: var(--grafite); font-size: 13px; margin-top: 2px; }
+.lista-conf li .botao { margin-top: 8px; padding: 6px 12px; font-size: 14px; }
+
+.opcao { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+.opcao input { margin-top: 4px; width: 16px; height: 16px; accent-color: var(--tinta); flex: none; }
+.opcao span small { display: block; color: var(--grafite); font-size: 13px; }
+.modelo { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--linha); font-size: 14px; }
+.modelo input[type="file"] { display: none; }
+
+.motivos { margin: 10px 0 0; padding-left: 18px; color: var(--grafite); font-size: 13.5px; }
+.resultado { margin-top: 14px; padding: 12px 14px; background: var(--verde-fundo); border-radius: 4px; font-size: 14px; }
+.resultado h3 { margin: 0 0 6px; font-size: 15px; color: var(--verde); }
+.resultado p { margin: 6px 0; }
+.resultado .botoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.resultado .botao { padding: 6px 12px; font-size: 14px; }
+.resultado pre { white-space: pre-wrap; font: 13px/1.45 var(--sans); margin: 8px 0 0; color: var(--grafite); }
+.erro-caixa { margin-top: 12px; padding: 12px 14px; background: var(--vermelho-fundo); border-left: 4px solid var(--vermelho); border-radius: 4px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.erro-caixa strong { display: block; color: var(--vermelho); margin-bottom: 4px; }
+
+.busca-assistida { margin-top: 14px; padding: 14px; background: #FFF8D6; border-left: 4px solid var(--marca-borda); border-radius: 4px; }
+.busca-assistida h3 { margin: 0 0 6px; font-size: 15px; }
+.busca-assistida ol { margin: 12px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.busca-assistida .pend strong { display: block; font-size: 14px; }
+.busca-assistida .pend .det { display: block; color: var(--grafite); font-size: 13px; margin-bottom: 6px; }
+.busca-assistida .pend .botao { padding: 5px 11px; font-size: 13.5px; text-decoration: none; margin-bottom: 6px; }
+.busca-assistida > .botao.largo + .botao.largo { margin-top: 8px; }
+.busca-assistida input { width: 100%; padding: 7px 9px; border: 1px solid #A9B0A6; border-radius: 4px; font-size: 13.5px; background: var(--papel); }
+.busca-assistida input[aria-invalid="true"] { border-color: var(--vermelho); }
+.msg-link { margin: 4px 0 0; color: var(--vermelho); font-size: 13px; }
+.salvos { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--linha); font-size: 14px; }
+.salvos summary { cursor: pointer; font-weight: 700; }
+.salvos ul { margin: 8px 0; padding-left: 18px; max-height: 14rem; overflow: auto; }
+.salvos li { margin: 3px 0; overflow-wrap: anywhere; }
+.salvos .botao { padding: 6px 12px; font-size: 14px; }
+
+/* Prévia */
+.previa { min-width: 0; }
+.vazio {
+  background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio);
+  padding: 48px clamp(20px, 6vw, 72px); min-height: 60vh;
+}
+.vazio h2 { font: 600 30px/1.2 var(--serif); margin: 0 0 14px; max-width: 22ch; }
+.vazio p { max-width: 60ch; color: var(--grafite); font-size: 16px; }
+.vazio .exemplo { margin-top: 32px; max-width: 560px; border-left: 2px solid var(--linha); }
+
+.cabeca-previa { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.abas { display: flex; gap: 4px; }
+.aba {
+  padding: 8px 14px; border: 1px solid var(--linha); border-bottom: 0; border-radius: var(--raio) var(--raio) 0 0;
+  background: #D3D8D0; font-weight: 700; cursor: pointer;
+}
+.aba[aria-selected="true"] { background: var(--papel); }
+.resumo-previa { margin-left: auto; color: var(--grafite); font-size: 14px; text-align: right; }
+
+.folha {
+  background: var(--papel); border: 1px solid var(--linha); border-radius: 0 var(--raio) var(--raio) var(--raio);
+  padding: 28px clamp(12px, 3vw, 40px) 48px 0;
+  box-shadow: 0 1px 0 #BFC5BB, 0 12px 28px -18px rgba(29, 42, 68, .35);
+}
+.aviso-folha { margin: 0 0 16px 9.5rem; padding: 10px 12px; border-radius: 4px; font-size: 14px; }
+.aviso-folha.bloqueio { background: var(--vermelho-fundo); border-left: 4px solid var(--vermelho); }
+@media (max-width: 640px) { .aviso-folha { margin-left: 12px; } }
+
+.sep-pagina {
+  display: flex; align-items: center; gap: 12px; margin: 22px 0 14px 9.5rem;
+  color: var(--grafite); font-size: 12.5px;
+}
+.sep-pagina::before, .sep-pagina::after { content: ""; height: 1px; background: var(--linha); flex: 1; }
+.sep-pagina:first-child { margin-top: 0; }
+
+.par {
+  display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); column-gap: 0;
+  cursor: pointer; position: relative;
+}
+.par .margem {
+  padding: 5px 14px 0 8px; text-align: right; color: var(--grafite);
+  font: 12.5px/1.35 var(--sans); overflow-wrap: anywhere; border-right: 2px solid transparent;
+}
+.par .corpo { padding: 2px 0 2px 18px; max-width: 72ch; }
+.par:hover .margem { color: var(--tinta); }
+.par:hover .corpo { background: #F5F7FA; }
+.par.sel .margem { border-right-color: var(--tinta); color: var(--tinta); font-weight: 700; }
+.par .txt { margin: 0 0 9px; font: 16.5px/1.62 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
+.par.atencao .txt { background: linear-gradient(transparent 8%, var(--marca) 8%, var(--marca) 92%, transparent 92%); box-decoration-break: clone; -webkit-box-decoration-break: clone; display: inline; }
+.par.atencao .corpo { padding-bottom: 9px; }
+.par .nota { margin: 6px 0 4px; font: italic 13.5px/1.45 var(--sans); color: #6B5300; }
+@media (max-width: 640px) {
+  .par { grid-template-columns: 1fr; }
+  .par .margem { text-align: left; padding: 6px 12px 0; }
+  .par .corpo { padding-left: 12px; }
+  .sep-pagina { margin-left: 12px; }
+}
+/* aparência aproximada de cada estilo do modelo */
+.e-epigrafe .txt { font-weight: 600; }
+.e-ementa .txt { margin-left: min(38%, 18rem); font-size: 15.5px; }
+.e-titulo .txt, .e-anexo .txt, .e-subtitulo .txt { display: block; text-align: center; font-weight: 600; }
+.e-autoridade .txt { display: block; text-align: center; font-weight: 600; margin-bottom: 0; }
+.e-cargo .txt { display: block; text-align: center; }
+.e-publicacao .txt { font-style: italic; font-size: 15px; }
+.e-redacao_nova .txt, .e-redacao_antiga .txt, .e-remissao .txt, .e-remissao_antiga .txt { padding-left: 1.5em; border-left: 2px solid var(--linha); display: block; }
+.e-redacao_antiga .txt, .e-remissao_antiga .txt { color: var(--grafite); }
+
+.editor { padding: 6px 0 14px; }
+.editor textarea { font: 16px/1.55 var(--serif); min-height: 6em; resize: vertical; }
+.editor .linha { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.editor select { width: auto; min-width: 12rem; }
+.editor .botao { padding: 6px 12px; font-size: 14px; }
+
+.marcador { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); margin: 6px 0 14px; }
+.marcador .margem { padding: 9px 14px 0 8px; text-align: right; color: var(--grafite); font-size: 12.5px; }
+.marcador .cartao {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; max-width: 72ch;
+  margin-left: 18px; padding: 8px 12px; border: 1px dashed #A9B0A6; border-radius: 4px; background: #F6F7F4; font-size: 14px;
+}
+@media (max-width: 640px) { .marcador { grid-template-columns: 1fr; } .marcador .margem { text-align: left; padding-left: 12px; } .marcador .cartao { margin-left: 12px; } }
+
+/* Tabelas */
+.bloco-tabela { padding: 0 0 26px 28px; }
+.bloco-tabela + .bloco-tabela { border-top: 1px solid var(--linha); padding-top: 22px; }
+.bloco-tabela header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.bloco-tabela h3 { margin: 0; font: 600 20px/1.2 var(--serif); }
+.bloco-tabela .onde { color: var(--grafite); font-size: 14px; }
+.selo { font-size: 13px; font-weight: 700; padding: 2px 9px; border-radius: 99px; }
+.selo.ok { background: var(--verde-fundo); color: var(--verde); }
+.selo.pendente { background: var(--marca); color: #5C4700; }
+.problemas { margin: 6px 0 10px; padding-left: 18px; font-size: 14px; color: #5C4700; }
+.rolagem { overflow-x: auto; border: 1px solid var(--linha); border-radius: 4px; }
+.rolagem table { border-collapse: collapse; width: 100%; font: 14.5px/1.4 var(--serif); }
+.rolagem td { border: 1px solid #DADDD6; padding: 5px 8px; vertical-align: top; cursor: pointer; min-width: 3em; }
+.rolagem tr:first-child td { background: #F0F2EE; font-weight: 600; }
+.rolagem td:hover { background: #F5F7FA; }
+.rolagem td.sel { outline: 2px solid var(--tinta); outline-offset: -2px; background: #EEF1F6; }
+.acoes-tabela { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.acoes-tabela .botao { padding: 6px 12px; font-size: 14px; }
+.editor-celula { margin-top: 10px; padding: 12px; background: #F4F5F2; border-radius: 4px; }
+.editor-celula label { font-weight: 700; font-size: 14px; }
+.editor-celula textarea { margin-top: 6px; min-height: 3.5em; font: 15px/1.45 var(--serif); }
+.sem-tabelas { padding: 0 28px; color: var(--grafite); }
+
+/* Ver como no Word */
+.aba.aba-word { display: inline-flex; align-items: center; gap: 7px; margin-left: 10px; }
+.aba.aba-word svg { flex: none; }
+.folha.vista { padding: 0; overflow: hidden; }
+.aviso-word { margin: 0; padding: 10px 16px; font-size: 13.5px; color: var(--grafite); background: #F6F7F4; border-bottom: 1px solid var(--linha); }
+.carregando-word { margin: 0; padding: 40px 16px; color: var(--grafite); text-align: center; }
+.vista-word { position: relative; }
+.vista-word.atualizando .area-word { opacity: .45; transition: opacity .2s; }
+.vista-word.atualizando::after { content: "Atualizando…"; position: absolute; top: 52px; right: 16px; background: var(--tinta); color: #fff; font-size: 13px; padding: 3px 10px; border-radius: 99px; }
+.area-word { overflow-x: auto; }
+.area-word .docx-wrapper { background: #C9CEC6 !important; padding: 24px 12px 6px !important; }
+.area-word .docx-wrapper > section.docx { box-shadow: 0 1px 2px rgba(0,0,0,.18), 0 10px 24px -14px rgba(29,42,68,.45) !important; margin-bottom: 24px !important; }
+.area-word p.editavel { cursor: pointer; border-radius: 2px; }
+.area-word p.editavel:hover, .area-word p.editavel:focus-visible { outline: 2px solid rgba(45, 63, 99, .45); outline-offset: 2px; }
+.area-word table.editavel-tabela { cursor: pointer; }
+.area-word table.editavel-tabela:hover { outline: 2px solid rgba(45, 63, 99, .45); outline-offset: 2px; }
+.dlg-editar { width: min(92vw, 720px); }
+.dlg-editar h3 { margin: 0 0 10px; font: 600 18px/1.3 var(--serif); }
+.editor-rico {
+  min-height: 7em; max-height: 48vh; overflow: auto; padding: 10px 12px; border: 1px solid #A9B0A6; border-radius: 4px;
+  font: 16px/1.6 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--papel);
+}
+.editor-rico:focus { outline: 3px solid var(--tinta-2); outline-offset: 1px; }
+.barra-edicao { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.barra-edicao button { border: 1px solid #A9B0A6; background: var(--papel); border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 14px; }
+.barra-edicao button:hover { background: #EEF1F6; }
+.barra-edicao button.fmt { min-width: 36px; font: 600 16px/1 var(--serif); }
+.barra-edicao button[aria-pressed="true"] { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+.barra-edicao button:disabled { opacity: .4; cursor: not-allowed; }
+.barra-edicao button.perigo { color: var(--vermelho); border-color: #D8A5A8; }
+.barra-edicao .sep { width: 1px; height: 24px; background: var(--linha); margin: 0 4px; }
+.dlg-editar .dica { margin: 6px 0 0; }
+.botao.desfazer { padding: 6px 12px; font-size: 14px; margin-left: 10px; align-self: center; }
+.dlg-editar .linha-estilo { display: flex; align-items: center; gap: 10px; margin: 10px 0 16px; font-weight: 700; font-size: 14px; }
+.dlg-editar select { width: auto; min-width: 12rem; font-weight: 400; }
+
+/* Editor do Word (SuperDoc) */
+.botao.largo + .botao.largo { margin-top: 8px; }
+.editor-word { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--mesa); }
+body.com-editor { overflow: hidden; }
+.editor-topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 18px; background: var(--papel); border-bottom: 1px solid var(--linha); }
+.editor-topo h2 { margin: 0; font: 600 19px/1.2 var(--serif); }
+.editor-arquivo { color: var(--grafite); font-size: 14px; overflow-wrap: anywhere; }
+.editor-estado { margin-left: auto; color: var(--grafite); font-size: 13.5px; }
+.editor-topo .botao { padding: 7px 14px; font-size: 14px; }
+.editor-barra { background: var(--papel); border-bottom: 1px solid var(--linha); min-height: 44px; }
+.editor-documento { flex: 1; min-height: 0; overflow: auto; }
+.editor-documento > .erro-caixa { margin: 24px; }
+.editor-documento .superdoc { justify-content: safe center; padding: 20px 0 32px; }
+/* no ajuste à largura (celular), o editor encolhe a página a partir do centro: aqui a centralização comum é a certa */
+.editor-documento.ajustado .superdoc { justify-content: center; }
+
+/* Salvar em PDF: imprime só as cópias das páginas do editor, do tamanho exato da folha */
+#impressao { display: none; }
+@media print {
+  body.imprimindo > :not(#impressao) { display: none !important; }
+  body.imprimindo #impressao { display: block !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body.imprimindo #impressao .superdoc-layout { gap: 0 !important; padding: 0 !important; margin: 0 !important; }
+  body.imprimindo #impressao .superdoc-page { break-after: page; box-shadow: none !important; margin: 0 !important; }
+  body.imprimindo #impressao .superdoc-page.ultima-pagina { break-after: auto; }
+  /* o editor acrescenta "(endereço)" depois de cada link ao imprimir; no ato, o link fica só no texto */
+  body.imprimindo #impressao .superdoc-link::after, body.imprimindo #impressao a[href]::after { content: none !important; }
+}
+
+/* Diálogos */
+dialog { border: 0; border-radius: 8px; padding: 0; max-width: min(92vw, 980px); box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+dialog::backdrop { background: rgba(29, 42, 68, .45); }
+.dlg { padding: 20px 22px; }
+.dlg p { margin: 0 0 16px; max-width: 60ch; font-size: 16px; }
+.dlg .botoes { display: flex; gap: 10px; justify-content: flex-end; }
+.dlg-recorte .imagem { max-height: 72vh; overflow: auto; border: 1px solid var(--linha); margin-bottom: 12px; }
+.dlg-recorte img { display: block; max-width: none; }
+.dlg-recorte h3 { margin: 0 0 10px; font: 600 18px/1.3 var(--serif); }
+
+.rodape { padding: 0 28px 28px; color: var(--grafite); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .motor .ponto { animation: none !important; } }
+</style>
+</head>
+<body>
+<header class="topo">
+  <h1>Formatador SEFA</h1>
+  <span class="sub">Importar ato do PDF do diário oficial</span>
+  <div class="motor" id="motor" data-estado="carregando" role="status" aria-live="polite">
+    <span class="ponto" aria-hidden="true"></span><span id="motor-texto">Preparando o formatador</span>
+  </div>
+</header>
+
+<main class="grade">
+  <div class="passos">
+    <section class="passo" aria-labelledby="p1">
+      <h2 id="p1"><span class="n">1</span>PDF do diário oficial</h2>
+      <label class="soltar" id="soltar">
+        <input type="file" id="arquivo-pdf" accept="application/pdf,.pdf">
+        <strong>Arraste o PDF aqui</strong>
+        <span class="dica">ou clique para escolher (DOE, DO-e/SEFA ou DOU)</span>
+      </label>
+      <div class="arquivo" id="arquivo-escolhido" hidden>
+        <span class="nome"><span id="pdf-nome"></span> <span class="tam" id="pdf-tam"></span></span>
+        <button class="ligacao" type="button" id="trocar-pdf">Trocar</button>
+      </div>
+    </section>
+
+    <section class="passo" aria-labelledby="p2">
+      <h2 id="p2"><span class="n">2</span>Número do ato</h2>
+      <input type="text" id="consulta" placeholder="Ex.: 494/2026-SEFA.GS" autocomplete="off" aria-labelledby="p2">
+      <p class="dica">Um trecho único da epígrafe, como aparece no diário.</p>
+      <label class="campo" for="max-paginas">Máximo de páginas do ato</label>
+      <input type="number" id="max-paginas" min="1" max="100" value="12">
+      <button class="botao principal largo" type="button" id="analisar" disabled>Analisar PDF</button>
+      <div id="analisar-erro"></div>
+    </section>
+
+    <section class="passo" aria-labelledby="p3" id="passo-conferir" aria-disabled="true">
+      <h2 id="p3"><span class="n">3</span>Conferir</h2>
+      <ul class="lista-conf" id="lista-conf"><li>Analise o PDF para ver o que precisa de conferência.</li></ul>
+    </section>
+
+    <section class="passo" aria-labelledby="p4" id="passo-gerar" aria-disabled="true">
+      <h2 id="p4"><span class="n">4</span>Gerar o Word</h2>
+      <label class="opcao"><input type="checkbox" id="op-links" checked>
+        <span>Criar hyperlinks das leis, decretos etc. citados
+          <small id="dica-links">Usa a tabela de links do site e os links que você salvou. As demais citações ficam em amarelo, e a página mostra antes de salvar as que ficaram sem link, para você procurá-las no site da SEFA.</small></span></label>
+      <label class="opcao"><input type="checkbox" id="op-relatorio">
+        <span>Gerar relatório de conferência <small>Arquivo HTML para comparar com o PDF.</small></span></label>
+      <label class="opcao"><input type="checkbox" id="op-municipios" checked>
+        <span>Padronizar grafia de municípios nas tabelas</span></label>
+      <div class="modelo">
+        Modelo Word: <strong id="modelo-nome">padrão da SEFA</strong>
+        <button class="ligacao" type="button" id="modelo-trocar">Usar outro modelo</button>
+        <button class="ligacao" type="button" id="modelo-padrao" hidden>Voltar ao padrão</button>
+        <input type="file" id="arquivo-modelo" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+      </div>
+      <details class="salvos" id="salvos" hidden>
+        <summary>Links salvos neste navegador (<span id="salvos-n">0</span>)</summary>
+        <ul id="salvos-lista"></ul>
+        <button class="botao" type="button" id="salvos-exportar">Exportar para a tabela</button>
+        <p class="dica">Gera um arquivo com uma linha por ato. Mande para quem mantém o site; as linhas podem ser coladas no fim da tabela_links.tsv.</p>
+      </details>
+      <button class="botao principal largo" type="button" id="gerar" disabled>Gerar o Word</button>
+      <button class="botao largo" type="button" id="gerar-pdf" disabled>Gerar PDF</button>
+      <button class="botao largo" type="button" id="editar" disabled>Editar antes de salvar</button>
+      <ul class="motivos" id="motivos" hidden></ul>
+      <div id="gerar-saida"></div>
+    </section>
+  </div>
+
+  <section class="previa" id="previa" aria-label="Prévia do ato">
+    <div class="vazio" id="vazio">
+      <h2>A prévia do ato aparece aqui</h2>
+      <p>Escolha o PDF e digite o número do ato. Cada parágrafo aparece com o estilo do modelo na margem; os trechos que o programa pede para conferir ficam marcados em amarelo. Clique em um parágrafo ou célula para corrigir antes de gerar o Word.</p>
+      <p>O PDF é lido neste computador. Nenhum arquivo é enviado para servidores.</p>
+    </div>
+  </section>
+</main>
+<footer class="rodape" id="rodape"></footer>
+
+<div id="editor-word" class="editor-word" hidden role="dialog" aria-modal="true" aria-labelledby="editor-titulo">
+  <header class="editor-topo">
+    <h2 id="editor-titulo">Editor do Word</h2>
+    <span class="editor-arquivo" id="editor-arquivo"></span>
+    <span class="editor-estado" id="editor-estado" role="status" aria-live="polite"></span>
+    <button class="botao" type="button" id="editor-relatorio" hidden>Salvar o relatório</button>
+    <button class="botao" type="button" id="editor-fechar">Fechar o editor</button>
+    <button class="botao" type="button" id="editor-pdf" disabled title="Abre a janela de impressão; escolha Salvar como PDF">Salvar em PDF</button>
+    <button class="botao principal" type="button" id="editor-baixar" disabled>Salvar o Word editado</button>
+  </header>
+  <div class="editor-barra" id="editor-barra"></div>
+  <div class="editor-documento" id="editor-documento"></div>
+</div>
+
+<dialog id="dlg-confirma">
+  <form method="dialog" class="dlg">
+    <p id="dlg-confirma-texto"></p>
+    <div class="botoes">
+      <button class="botao" value="nao" id="dlg-confirma-nao">Ainda não</button>
+      <button class="botao principal" value="sim" id="dlg-confirma-sim">Sim, conferi</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-editar">
+  <div class="dlg dlg-editar">
+    <h3>Corrigir trecho</h3>
+    <div class="barra-edicao" role="toolbar" aria-label="Edição do trecho">
+      <button type="button" class="fmt" data-cmd="bold" title="Negrito (Ctrl+B)" aria-pressed="false"><b>N</b></button>
+      <button type="button" class="fmt" data-cmd="italic" title="Itálico (Ctrl+I)" aria-pressed="false"><i>I</i></button>
+      <button type="button" class="fmt" data-cmd="underline" title="Sublinhado (Ctrl+U)" aria-pressed="false"><u>S</u></button>
+      <span class="sep" aria-hidden="true"></span>
+      <button type="button" class="acao" id="ed-dividir" title="Divide o parágrafo em dois no ponto onde está o cursor">Dividir no cursor</button>
+      <button type="button" class="acao" id="ed-juntar-ant">Juntar com o anterior</button>
+      <button type="button" class="acao" id="ed-juntar-prox">Juntar com o próximo</button>
+      <button type="button" class="acao perigo" id="ed-apagar">Apagar parágrafo</button>
+    </div>
+    <div id="dlg-editar-texto" class="editor-rico" contenteditable="true" role="textbox" aria-multiline="true"
+         aria-label="Texto do trecho" spellcheck="true"></div>
+    <p class="dica">Selecione um trecho e use N, I ou S para formatar. Enter não cria parágrafo novo: use Dividir no cursor. Shift+Enter quebra a linha dentro do parágrafo.</p>
+    <p class="nota" id="dlg-editar-nota" hidden></p>
+    <p class="msg-link" id="dlg-editar-erro" role="alert" hidden></p>
+    <label class="linha-estilo">Tipo do parágrafo <select id="dlg-editar-estilo"></select></label>
+    <div class="botoes">
+      <button type="button" class="botao" id="dlg-editar-cancelar">Cancelar</button>
+      <button type="button" class="botao principal" id="dlg-editar-aplicar">Aplicar correção</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-recorte">
+  <form method="dialog" class="dlg dlg-recorte">
+    <h3 id="dlg-recorte-titulo"></h3>
+    <div class="imagem"><img id="dlg-recorte-img" alt="Recorte da tabela no PDF original"></div>
+    <div class="botoes"><button class="botao principal" value="fechar">Fechar</button></div>
+  </form>
+</dialog>
+
+<script src="lib/jszip.min.js"></script>
+<script src="lib/docx-preview.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
