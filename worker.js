@@ -4,7 +4,7 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.20-web1";
+const VERSAO = "3.20-web3";
 
 // Módulos do programa desktop (sem alteração) + a ponte com a página
 const ARQUIVOS = [

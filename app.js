@@ -57,6 +57,7 @@ function gravarLinksUsuario(dados) {
     return false;
   }
 }
+const SEM_LINK = "-";   // valor guardado para o ato que não tem link (fica sem link e sem destaque)
 function validarEndereco(texto) {
   const t = (texto || "").trim();
   if (!t) return { vazio: true };
@@ -103,7 +104,7 @@ worker.onmessage = ({ data }) => {
     definirMotor("pronto", "Pronto");
     $("dica-links").textContent = `Usa a tabela de links do site (${data.info.tabela_links} atos) e os links que você salvou. ` +
       "As demais citações ficam em amarelo, e a página mostra antes de salvar as que ficaram sem link, para você procurá-las no site da SEFA.";
-    $("rodape").textContent = `Formatador SEFA 3.20, versão web. PyMuPDF ${data.info.pymupdf}, ` +
+    $("rodape").textContent = `Formatador SEFA 3.20, versão web 3. PyMuPDF ${data.info.pymupdf}, ` +
       `pdfplumber ${data.info.pdfplumber}. O PDF é processado neste computador.`;
     return atualizar();
   }
@@ -511,6 +512,7 @@ async function entregar(r) {
     h("p", {}, salvoComo),
     r.resumo_links ? h("p", {}, r.resumo_links) : null,
     restantes.length ? h("p", {}, `Ficaram em amarelo no Word: ${restantes.join("; ")}.`) : null,
+    marcadosSemLink(r),
     r.aviso_links ? h("p", { class: "msg-link" }, r.aviso_links) : null,
     h("p", {}, "Compare com o PDF antes de usar."),
     h("div", { class: "botoes" }, botoesDoResultado(r, nomeWord))),
@@ -519,44 +521,85 @@ async function entregar(r) {
   ].filter(Boolean));
 }
 
+function marcadosSemLink(r) {
+  const m = r.sem_link_marcados || [];
+  return m.length ? h("p", { class: "dica" }, `Sem link e sem destaque, porque foram marcados como atos sem link: ${m.join("; ")}.`) : null;
+}
+
 function painelAntesDeBaixar(r) {
   const pendentes = r.pendentes_busca;
   const itens = pendentes.map((p) => {
     const campo = h("input", { type: "url", inputmode: "url", placeholder: "Cole aqui o endereço da página do ato",
       "aria-label": `Endereço de ${p.exemplo}`, spellcheck: "false" });
     const msg = h("p", { class: "msg-link", hidden: true });
+    const semLink = h("input", { type: "checkbox" });
+    const botoes = [h("a", { class: "botao", href: p.busca, target: "_blank", rel: "noopener" }, "Procurar no site da SEFA")];
+    if (p.planalto) {
+      botoes.push(h("a", { class: "botao", href: p.planalto, target: "_blank", rel: "noopener", onclick: () => {
+        if (campo.value.trim() || semLink.checked) return;
+        campo.value = p.planalto;
+        campo.dispatchEvent(new Event("input"));
+        msg.hidden = false;
+        msg.className = "msg-dica";
+        msg.textContent = "O endereço do Planalto foi colocado no campo. Confira na aba que abriu se é o ato certo; se não for, apague-o.";
+      } }, "Abrir no Planalto"));
+    }
     const li = h("li", { class: "pend" },
       h("strong", {}, p.exemplo),
       h("span", { class: "det" }, `${p.qtd} ${p.qtd === 1 ? "ocorrência" : "ocorrências"} no ato`),
-      h("a", { class: "botao", href: p.busca, target: "_blank", rel: "noopener" }, "Procurar no site da SEFA"),
-      campo, msg);
-    return { p, campo, msg, li };
+      h("div", { class: "botoes-pend" }, botoes),
+      campo, msg,
+      h("label", { class: "sem-link" }, semLink, "Não tem link: tirar o destaque amarelo"));
+    return { p, campo, msg, semLink, li };
   });
-  const noEditor = est.destino === "editor";
   const fim = { editor: "abrir no editor", pdf: "gerar o PDF" }[est.destino] || "salvar";
   const aplicar = h("button", { class: "botao principal largo", type: "button", disabled: true }, `Aplicar os links e ${fim}`);
   const semLinks = h("button", { class: "botao largo", type: "button" },
     { editor: "Abrir no editor sem esses links", pdf: "Gerar o PDF sem esses links" }[est.destino] || "Salvar sem esses links");
   const conferir = () => {
     let validos = 0;
+    let marcados = 0;
     let erros = 0;
     for (const it of itens) {
+      it.campo.disabled = it.semLink.checked;
+      it.li.classList.toggle("sem-link-marcado", it.semLink.checked);
+      if (it.semLink.checked) {
+        marcados += 1;
+        it.msg.hidden = true;
+        it.campo.setAttribute("aria-invalid", "false");
+        continue;
+      }
       const v = validarEndereco(it.campo.value);
-      it.msg.hidden = !v.erro;
-      it.msg.textContent = v.erro || "";
+      if (v.erro) {
+        it.msg.hidden = false;
+        it.msg.className = "msg-link";
+        it.msg.textContent = v.erro;
+      } else if (v.vazio || it.msg.className === "msg-link") {
+        it.msg.hidden = true;
+      }
       it.campo.setAttribute("aria-invalid", v.erro ? "true" : "false");
       if (v.ok) validos += 1;
       if (v.erro) erros += 1;
     }
-    aplicar.disabled = validos === 0 || erros > 0;
-    aplicar.textContent = validos > 1 ? `Aplicar os ${validos} links e ${fim}` : `Aplicar o link e ${fim}`;
-    if (validos === 0) aplicar.textContent = `Aplicar os links e ${fim}`;
+    aplicar.disabled = validos + marcados === 0 || erros > 0;
+    const partes = [];
+    if (validos) partes.push(validos > 1 ? `aplicar os ${validos} links` : "aplicar o link");
+    if (marcados) partes.push(marcados > 1 ? `tirar ${marcados} destaques` : "tirar o destaque");
+    const acao = partes.length ? partes.join(", ") : "aplicar os links";
+    aplicar.textContent = `${acao[0].toUpperCase()}${acao.slice(1)} e ${fim}`;
   };
-  itens.forEach((it) => it.campo.addEventListener("input", conferir));
+  itens.forEach((it) => {
+    it.campo.addEventListener("input", conferir);
+    it.semLink.addEventListener("change", conferir);
+  });
   aplicar.addEventListener("click", async () => {
     aplicar.disabled = semLinks.disabled = true;
     const novos = {};
     for (const it of itens) {
+      if (it.semLink.checked) {
+        novos[it.p.chave] = SEM_LINK;
+        continue;
+      }
       const v = validarEndereco(it.campo.value);
       if (v.ok) novos[it.p.chave] = v.url;
     }
@@ -572,7 +615,8 @@ function painelAntesDeBaixar(r) {
     h("h3", {}, `${{ editor: "Antes de abrir no editor", pdf: "Antes de gerar o PDF" }[est.destino] || "Antes de salvar"}: ${pendentes.length} ${pendentes.length === 1 ? "citação está" : "citações estão"} sem link`),
     h("p", { class: "dica" }, "A versão online não consulta o site da SEFA sozinha. Para incluir os links, clique em " +
       "Procurar no site da SEFA, abra o ato e cole aqui o endereço da página dele (o que tem idAto= no final). " +
-      "Os links ficam guardados neste navegador e entram sozinhos nos próximos atos."),
+      "Se o ato não tiver link, marque a caixa embaixo do campo: a citação fica sem link e sem o destaque amarelo. " +
+      "As escolhas ficam guardadas neste navegador e valem também para os próximos atos."),
     h("ol", {}, itens.map((it) => it.li)),
     aplicar, semLinks);
 }
@@ -584,7 +628,9 @@ function desenharLinksSalvos() {
   $("salvos").hidden = chaves.length === 0;
   $("salvos-n").textContent = chaves.length;
   $("salvos-lista").replaceChildren(...chaves.map((c) => h("li", {},
-    h("a", { href: dados[c], target: "_blank", rel: "noopener" }, c.split("|").filter(Boolean).join(" ")),
+    dados[c] === SEM_LINK
+      ? h("span", {}, `${c.split("|").filter(Boolean).join(" ")}: sem link`)
+      : h("a", { href: dados[c], target: "_blank", rel: "noopener" }, c.split("|").filter(Boolean).join(" ")),
     " ",
     h("button", { class: "ligacao", type: "button", onclick: () => {
       const atual = lerLinksUsuario();
@@ -1204,6 +1250,7 @@ function entregarNoEditor(r) {
     h("p", {}, nomeWord),
     r.resumo_links ? h("p", {}, r.resumo_links) : null,
     restantes.length ? h("p", {}, `Ficaram em amarelo no Word: ${restantes.join("; ")}.`) : null,
+    marcadosSemLink(r),
     h("div", { class: "botoes" },
       h("button", { class: "botao", type: "button", onclick: () => abrirEditor(r) }, "Voltar ao editor"),
       h("button", { class: "botao", type: "button", onclick: () => salvarArquivo(r.wordBytes, nomeWord, "docx", TIPO_DOCX) }, "Salvar sem editar"),
@@ -1441,6 +1488,7 @@ function entregarPdf(r) {
     h("p", {}, "Na janela que abriu, escolha Salvar como PDF; ali você escolhe a pasta e o nome do arquivo."),
     r.resumo_links ? h("p", {}, r.resumo_links) : null,
     restantes.length ? h("p", {}, `Ficaram em amarelo: ${restantes.join("; ")}.`) : null,
+    marcadosSemLink(r),
     h("div", { class: "botoes" },
       h("button", { class: "botao", type: "button", onclick: () => pdfDoResultado(r) }, "Abrir a impressão de novo"),
       h("button", { class: "botao", type: "button", onclick: () => salvarArquivo(r.wordBytes, nomeWord, "docx", TIPO_DOCX) }, "Salvar o Word"))));

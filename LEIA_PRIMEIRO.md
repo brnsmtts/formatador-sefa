@@ -1,4 +1,4 @@
-# Formatador SEFA 3.20, versão web
+# Formatador SEFA 3.20, versão web 3
 
 É a tela **Importar ato do PDF** rodando inteira no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
 
@@ -32,7 +32,7 @@ O primeiro acesso baixa cerca de 41 MB (Python e bibliotecas). Nos seguintes, o 
 ## Atualizar para uma nova versão do formatador
 
 1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
-2. Em `worker.js`, aumente o número em `const VERSAO = "3.20-web1";` (por exemplo, para `3.20-web2` ou `3.21-web1`). Assim os navegadores não usam os arquivos antigos guardados.
+2. Em `worker.js`, aumente o número em `const VERSAO = "3.20-web3";` (por exemplo, para `3.20-web4` ou `3.21-web1`). Assim os navegadores não usam os arquivos antigos guardados.
 3. Publique de novo.
 
 Se uma versão nova passar a importar outro módulo, acrescente o nome do arquivo à lista `ARQUIVOS` em `worker.js`.
@@ -42,11 +42,24 @@ O `web_ponte.py` é o único arquivo próprio da web. Ele:
 - faz os links consultarem só a tabela;
 - troca as janelas e diálogos pelo envio e download de arquivos.
 
+## Versão web 3 (tabela de links completa)
+
+A tabela de links aceita a forma curta `=idAto` no lugar do endereço, que é a usada pelo `MONTAR_TABELA_LINKS.bat` do programa do computador. Para o site achar quase todos os links, monte a tabela no computador e troque por ela a `py/tabela_links.tsv` do site (veja Hyperlinks, em Diferenças em relação ao desktop). Para trocar só a tabela, não é preciso mudar a `VERSAO`: em cerca de 10 minutos os navegadores passam a usar a tabela nova.
+
+## Versão web 2 (Resolução nº 046/2026)
+
+- **Citação do próprio ato.** Quando o ato cita a si mesmo ("conforme RESOLUÇÃO Nº 046, DE 10 DE AGOSTO DE 2026" dentro da própria Resolução nº 046), a citação fica sem link e sem destaque e não aparece na busca assistida.
+- **Ato sem link.** Na busca assistida, cada citação tem a caixa **Não tem link: tirar o destaque amarelo**. Marcada, a citação sai sem link e sem destaque, e a escolha fica guardada no navegador como as demais. Em **Links salvos neste navegador**, ela aparece como "sem link" e pode ser removida. Na `tabela_links.tsv`, o mesmo efeito se obtém com `-` no lugar do endereço (`Lei|6913|2006`, tabulação, `-`).
+- **Planalto.** Para leis, leis complementares e decretos que a citação diz federais (como "Lei Complementar Federal nº 160"), aparece também o botão **Abrir no Planalto**. Ele abre o endereço provável do ato no Planalto e o coloca no campo; confira na aba aberta se é o ato certo.
+- **Hífen invisível em maiúsculas.** Palavras partidas no fim da linha com o hífen invisível de alguns diários ficavam com um espaço no meio quando escritas em maiúsculas ("SO CIOECONÔMICO", "MADEI RAS"). Agora se unem.
+
+As duas primeiras mudanças estão no `links_legislacao.py` e a última no `extrator_pdf.py`, os mesmos arquivos do programa do computador. O pacote da 3.20 atualizada do computador traz os dois.
+
 ## Versão 3.20 (atos com o mesmo número)
 
 Os módulos `extrator_pdf.py`, `formatador_sefa.py` e `importar_pdf.py` vêm da versão 3.20 do programa do computador, sem alteração (veja o ALTERACOES_V3_20.txt dele). Quando o número digitado corresponde a mais de um ato do PDF, Analisar PDF abre a lista dos atos, com a página, a coluna, o título e o começo do texto de cada um, e você escolhe qual importar. Fica marcado o da Secretaria da Fazenda, quando há um só entre eles. Enter ou duplo clique importa; Esc cancela.
 
-O `links_legislacao.py` do site continua sendo o da 3.18 com o ajuste do link até o órgão; a 3.20 do computador voltou a ter o arquivo sem esse ajuste.
+O `links_legislacao.py` do site continua sendo o da 3.18 com o ajuste do link até o órgão; a 3.20 do computador voltou a ter o arquivo sem esse ajuste (o pacote da 3.20 atualizada o traz de volta).
 
 ## Versão 3.19 (Solução de Consulta)
 
@@ -60,9 +73,9 @@ Para o pacote caber num arquivo só, a biblioteca PyMuPDF (18 MB) não vem na pa
 
 ## Diferenças em relação ao desktop
 
-**Hyperlinks.** Só a `tabela_links.tsv` do site é consultada. A página não consegue falar com o site de legislação da SEFA nem com o Planalto, porque o navegador bloqueia pedidos a outros domínios. Citações fora da tabela ficam destacadas em amarelo, e o resumo final lista quais são. Para ampliar a cobertura, rode a versão desktop, que acrescenta os atos novos à tabela, e publique a tabela atualizada.
+**Hyperlinks.** Só a `tabela_links.tsv` do site é consultada. A página não consegue falar com o site de legislação da SEFA nem com o Planalto, porque o navegador bloqueia pedidos a outros domínios. Citações fora da tabela ficam destacadas em amarelo, e o resumo final lista quais são. Para ampliar a cobertura, rode no programa do computador o `MONTAR_TABELA_LINKS.bat`, que grava na tabela o link de todos os atos do site da SEFA, e troque a `py/tabela_links.tsv` do site pela tabela montada. Ela aceita a forma curta `=idAto` (`Lei|6913|2006`, tabulação, `=101`), que a montagem usa para a tabela ficar pequena; com 60 mil atos, são cerca de 4 MB, e o Word continuou sendo gerado em cerca de um segundo.
 
-**Busca assistida.** Ao clicar em **Gerar o Word**, a página confere os links antes de baixar. Se todas as citações tiverem link, o Word é baixado na hora. Se alguma ficar sem link, a página a lista primeiro. Cada citação tem um botão que abre o site da SEFA numa nova aba, já pesquisando o número e o ano. Abra o ato certo, copie o endereço da página dele (o que tem `idAto=` no final), cole na página e clique em **Aplicar os links e baixar**, ou em **Baixar sem esses links**. Nos dois casos o Word é baixado uma única vez. Os links colados ficam guardados naquele navegador e entram sozinhos nos próximos atos. Em **Links salvos neste navegador**, dá para remover um link errado ou exportar as linhas no formato da `tabela_links.tsv`, para incorporá-las à tabela oficial do site.
+**Busca assistida.** Ao clicar em **Gerar o Word**, a página confere os links antes de baixar. Se todas as citações tiverem link, o Word é baixado na hora. Se alguma ficar sem link, a página a lista primeiro. Cada citação tem um botão que abre o site da SEFA numa nova aba, já pesquisando o número e o ano. Abra o ato certo, copie o endereço da página dele (o que tem `idAto=` no final), cole na página e clique em **Aplicar os links e salvar**, ou em **Salvar sem esses links**. Se o ato não tiver link, marque **Não tem link: tirar o destaque amarelo**. Nos dois casos o Word é baixado uma única vez. Os links colados ficam guardados naquele navegador e entram sozinhos nos próximos atos. Em **Links salvos neste navegador**, dá para remover um link errado ou exportar as linhas no formato da `tabela_links.tsv`, para incorporá-las à tabela oficial do site.
 
 **Ver como no Word.** O botão ao lado das abas da prévia mostra na tela o Word que será baixado, com as fontes e recuos do modelo, as tabelas, os links e os destaques em amarelo. Clicar num parágrafo abre a correção daquele trecho: dá para mudar o texto e o tipo do parágrafo, aplicar negrito, itálico ou sublinhado em parte do texto, dividir o parágrafo no cursor, juntá-lo ao anterior ou ao próximo e apagá-lo. A visualização se refaz depois de cada correção. Clicar numa tabela abre a aba Tabelas, onde as células continuam sendo corrigidas, para manter a exigência de conferir a tabela de novo. O botão **Desfazer** (ou Ctrl+Z fora do texto) volta a última correção ou conferência. Parágrafos apagados aparecem no relatório de conferência, e cada trecho corrigido, unido ou dividido fica anotado nele. A divisão em páginas não aparece, porque só o Word a calcula. A visualização usa as bibliotecas docx-preview (Apache 2.0) e JSZip (MIT), na pasta `lib/`.
 

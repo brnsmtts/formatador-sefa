@@ -139,6 +139,12 @@ input[type="number"]:not(.editor-word *) { width: 6.5em; }
 .busca-assistida input { width: 100%; padding: 7px 9px; border: 1px solid #A9B0A6; border-radius: 4px; font-size: 13.5px; background: var(--papel); }
 .busca-assistida input[aria-invalid="true"] { border-color: var(--vermelho); }
 .msg-link { margin: 4px 0 0; color: var(--vermelho); font-size: 13px; }
+.msg-dica { margin: 4px 0 0; color: var(--grafite); font-size: 13px; }
+.busca-assistida .botoes-pend { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.busca-assistida .sem-link { display: flex; align-items: flex-start; gap: 7px; margin-top: 6px; font-size: 13.5px; cursor: pointer; }
+.busca-assistida .sem-link input { width: 16px; height: 16px; padding: 0; margin: 2px 0 0; accent-color: var(--tinta); flex: none; }
+.busca-assistida .sem-link-marcado input[type="url"] { opacity: .5; }
+.busca-assistida .sem-link-marcado strong { text-decoration: line-through; text-decoration-color: #A9B0A6; }
 .salvos { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--linha); font-size: 14px; }
 .salvos summary { cursor: pointer; font-weight: 700; }
 .salvos ul { margin: 8px 0; padding-left: 18px; max-height: 14rem; overflow: auto; }
