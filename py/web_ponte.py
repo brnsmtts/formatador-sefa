@@ -301,9 +301,10 @@ def _runs_do_paragrafo(doc, p_el) -> list[dict]:
     runs = []
     for r_el in p_el.iter(ex.qn("w:r")):
         run = Run(r_el, paragrafo)
+        # sublinhado só o direto: o dos links vem do estilo "Hyperlink" e não deve virar formatação manual
         runs.append({"t": run.text, "b": _formatacao_efetiva(run, paragrafo, "bold"),
                      "i": _formatacao_efetiva(run, paragrafo, "italic"),
-                     "u": _formatacao_efetiva(run, paragrafo, "underline")})
+                     "u": bool(run.underline)})
     return _limpar_runs(runs)
 
 
@@ -327,6 +328,12 @@ def _runs_do_trecho(indice: int) -> list[dict]:
                     return runs
         except Exception:
             pass
+    try:                                   # Solução de Consulta: negrito/itálico copiados do diário
+        copiados = ex.block_runs(bloco)
+    except Exception:
+        copiados = None
+    if copiados:
+        return _limpar_runs([{"t": t, "b": bool(m & 1), "i": bool(m & 2), "u": False} for t, m in copiados])
     return [{"t": bloco.text, "b": False, "i": False, "u": False}]
 
 
@@ -426,6 +433,12 @@ def aplicar_trecho(indice: int, runs_json: str, estilo: str, formatou: bool) -> 
         return _erro(exc)
 
 
+def _marcas_do_pdf(runs) -> list[tuple[str, int]]:
+    """Trechos do editor no formato da 3.19 (1 = negrito, 2 = itálico), para os atos cuja
+    formatação vem do diário (Solução de Consulta)."""
+    return [(r["t"], (1 if r.get("b") else 0) | (2 if r.get("i") else 0)) for r in runs if r.get("t")]
+
+
 def _posicao_no_documento(e, bloco) -> int:
     return next(k for k, x in enumerate(e.blocks) if x is bloco)
 
@@ -458,6 +471,8 @@ def juntar_paragrafos(indice: int) -> str:
         _guardar_para_desfazer()
         e = _extracao()
         a, b = e.paragraphs[indice], e.paragraphs[indice + 1]
+        if a.source_runs is not None or b.source_runs is not None:   # formatação copiada do diário
+            a.source_runs = ((a.source_runs or [(a.text, 0)]) + [(" ", 0)] + (b.source_runs or [(b.text, 0)]))
         a.text = a.text.rstrip() + " " + b.text.lstrip()
         if manual:
             a.formatacao_manual = _limpar_runs(runs)
@@ -481,6 +496,8 @@ def dividir_paragrafo(indice: int, antes_json: str, depois_json: str, estilo: st
         manual = formatou or getattr(bloco, "formatacao_manual", None)
         novo = ex.ParagraphBlock(_texto_runs(depois), estilo or bloco.role, bloco.page, bloco.kind, None,
                                  ["Parágrafo criado ao dividir um trecho na visualização do Word."])
+        if bloco.source_runs is not None:      # cada metade leva o negrito/itálico que tinha no diário
+            bloco.source_runs, novo.source_runs = _marcas_do_pdf(antes), _marcas_do_pdf(depois)
         bloco.text, bloco.role = _texto_runs(antes), estilo or bloco.role
         _anotar(bloco, "Trecho dividido manualmente na visualização do Word.")
         if manual:
@@ -507,7 +524,9 @@ def desfazer() -> str:
 # ---------------------------------------------------------------------------
 # ações da tela
 # ---------------------------------------------------------------------------
-def analisar(caminho_pdf: str, consulta: str, max_paginas: int = 12) -> str:
+def analisar(caminho_pdf: str, consulta: str, max_paginas: int = 12, ocorrencia: int = 0) -> str:
+    """ocorrencia: qual dos atos com esse identificador importar (1 = o primeiro do diário). Com 0 e mais
+    de um ato no PDF, nada é importado: a resposta traz a lista para a página perguntar qual (3.20)."""
     try:
         consulta = (consulta or "").strip()
         if not consulta:
@@ -516,8 +535,16 @@ def analisar(caminho_pdf: str, consulta: str, max_paginas: int = 12) -> str:
         if not 1 <= max_paginas <= 100:
             raise ValueError("Informe um número entre 1 e 100 páginas.")
         caminho = Path(caminho_pdf)
+        ocorrencia = int(ocorrencia or 0)
+        if not ocorrencia:
+            candidatos = ex.find_candidates(caminho, consulta)
+            if len(candidatos) > 1:
+                return _json(escolher=True, sugerido=ex.suggested_candidate(candidatos), candidatos=[
+                    {"pagina": c.page, "coluna": c.column, "titulo": c.epigraph, "inicio": c.preview}
+                    for c in candidatos])
         ESTADO["pdf"] = caminho
-        ESTADO["extracao"] = ex.extract_act(caminho, consulta, max_pages=max_paginas)
+        ESTADO["extracao"] = ex.extract_act(caminho, consulta, max_pages=max_paginas,
+                                            occurrence=ocorrencia or None)
         ESTADO["consulta"] = consulta
         ESTADO["versao"] += 1
         _HISTORICO.clear()

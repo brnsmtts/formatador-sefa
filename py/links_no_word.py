@@ -25,7 +25,7 @@ from typing import Callable
 from docx import Document
 from docx.oxml.ns import qn
 
-_W_P, _W_R, _W_RPR, _W_B = qn("w:p"), qn("w:r"), qn("w:rPr"), qn("w:b")
+_W_P, _W_R, _W_RPR, _W_B, _W_I = qn("w:p"), qn("w:r"), qn("w:rPr"), qn("w:b"), qn("w:i")
 _W_PPR, _W_PSTYLE, _W_VAL = qn("w:pPr"), qn("w:pStyle"), qn("w:val")
 _CONTEUDO = {qn("w:t"): None, qn("w:tab"): "\t", qn("w:br"): "\n", qn("w:cr"): "\n",
              qn("w:drawing"): "\ufffc", qn("w:pict"): "\ufffc", qn("w:object"): "\ufffc"}
@@ -68,7 +68,7 @@ class ResumoLinks:
 
 
 def assinatura(doc) -> list[tuple]:
-    """Texto, estilo e negrito direto de cada parágrafo (inclusive em tabelas), mais a
+    """Texto, estilo, negrito e itálico diretos de cada parágrafo (inclusive em tabelas), mais a
     estrutura das tabelas. Os links não podem alterar nada disso."""
     corpo = doc.element.body
     paragrafos = []
@@ -79,14 +79,17 @@ def assinatura(doc) -> list[tuple]:
         for r in p.iter(_W_R):
             rpr = r.find(_W_RPR)
             b = rpr.find(_W_B) if rpr is not None else None
+            i = rpr.find(_W_I) if rpr is not None else None
             ligado = b is not None and b.get(_W_VAL, "1") not in ("0", "false", "off")
+            italico = i is not None and i.get(_W_VAL, "1") not in ("0", "false", "off")
+            marca = "3" if ligado and italico else "1" if ligado else "2" if italico else "0"
             for filho in r:
                 if filho.tag not in _CONTEUDO:
                     continue
                 s = _CONTEUDO[filho.tag]
                 s = (filho.text or "") if s is None else s
                 texto.append(s)
-                negrito.append(("1" if ligado else "0") * len(s))
+                negrito.append(marca * len(s))
         paragrafos.append((ps.get(_W_VAL) if ps is not None else "", "".join(texto), "".join(negrito)))
     estrutura = (sum(1 for _ in corpo.iter(qn("w:tbl"))), sum(1 for _ in corpo.iter(qn("w:tr"))),
                  sum(1 for _ in corpo.iter(qn("w:tc"))))
@@ -118,7 +121,7 @@ def aplicar_links(docx_path: Path, log: Callable[[str], None] = print,
         if assinatura(Document(str(temporario))) != antes:
             resumo.concluido = False
             resumo.aviso = ("A conferência feita depois de criar os links encontrou diferença no texto, "
-                            "no estilo ou no negrito; por segurança, o Word foi mantido sem links.")
+                            "no estilo, no negrito ou no itálico; por segurança, o Word foi mantido sem links.")
             log("! " + resumo.aviso)
             return resumo
         os.replace(temporario, docx_path)

@@ -4,7 +4,7 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.18-web11";
+const VERSAO = "3.20-web1";
 
 // Módulos do programa desktop (sem alteração) + a ponte com a página
 const ARQUIVOS = [
@@ -93,9 +93,9 @@ const acoes = {
   async versao() {
     return await pronto;
   },
-  analisar({ pdf, consulta, maxPaginas }) {
+  analisar({ pdf, consulta, maxPaginas, ocorrencia }) {
     py.FS.writeFile("/work/entrada.pdf", new Uint8Array(pdf));
-    return json(ponte.analisar("/work/entrada.pdf", consulta, maxPaginas));
+    return json(ponte.analisar("/work/entrada.pdf", consulta, maxPaginas, ocorrencia || 0));
   },
   estado() {
     return json(ponte.estado());

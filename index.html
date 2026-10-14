@@ -313,6 +313,28 @@ body.com-editor { overflow: hidden; }
   body.imprimindo #impressao .superdoc-link::after, body.imprimindo #impressao a[href]::after { content: none !important; }
 }
 
+/* Escolha entre atos com o mesmo número (3.20) */
+.dlg-atos { width: min(94vw, 980px); }
+.dlg-atos h3 { margin: 0 0 8px; font: 600 19px/1.3 var(--serif); }
+.dlg-atos > p { font-size: 15px; color: var(--grafite); }
+.lista-atos { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow: auto; margin-bottom: 16px; }
+.opcao-ato {
+  display: grid; grid-template-columns: auto 7.5rem minmax(0, 1fr); gap: 4px 14px; align-items: start;
+  padding: 10px 12px; border: 1px solid var(--linha); border-radius: 6px; cursor: pointer; background: var(--papel);
+}
+.opcao-ato:hover { background: #F5F7FA; }
+.opcao-ato:has(input:checked) { border-color: var(--tinta); box-shadow: inset 3px 0 0 var(--tinta); background: #EEF1F6; }
+.opcao-ato input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--tinta); }
+.opcao-ato .onde { color: var(--grafite); font-size: 13.5px; }
+.opcao-ato .titulo { font: 600 15px/1.35 var(--serif); }
+.opcao-ato .inicio { grid-column: 3; color: var(--grafite); font-size: 14px; overflow-wrap: anywhere; }
+.opcao-ato .sugerido { display: inline-block; margin-left: 8px; font: 700 12px/1 var(--sans); padding: 3px 8px; border-radius: 99px; background: var(--verde-fundo); color: var(--verde); vertical-align: 2px; }
+@media (max-width: 640px) {
+  .opcao-ato { grid-template-columns: auto minmax(0, 1fr); }
+  .opcao-ato input { grid-row: 1 / span 3; }
+  .opcao-ato .onde, .opcao-ato .titulo, .opcao-ato .inicio { grid-column: 2; }
+}
+
 /* Diálogos */
 dialog { border: 0; border-radius: 8px; padding: 0; max-width: min(92vw, 980px); box-shadow: 0 20px 50px rgba(0,0,0,.3); }
 dialog::backdrop { background: rgba(29, 42, 68, .45); }
@@ -453,6 +475,18 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
       <button type="button" class="botao principal" id="dlg-editar-aplicar">Aplicar correção</button>
     </div>
   </div>
+</dialog>
+
+<dialog id="dlg-atos" aria-labelledby="dlg-atos-titulo">
+  <form method="dialog" class="dlg dlg-atos">
+    <h3 id="dlg-atos-titulo">Mais de um ato com esse número</h3>
+    <p id="dlg-atos-texto"></p>
+    <div class="lista-atos" id="dlg-atos-lista" role="radiogroup" aria-labelledby="dlg-atos-titulo"></div>
+    <div class="botoes">
+      <button class="botao" value="cancelar">Cancelar</button>
+      <button class="botao principal" value="importar" id="dlg-atos-importar">Importar este ato</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="dlg-recorte">

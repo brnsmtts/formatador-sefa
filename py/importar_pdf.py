@@ -12,9 +12,9 @@ from pathlib import Path
 import fitz
 from docx import Document
 
-from extrator_pdf import (Extraction, ParagraphBlock, build_word, extract_act,
-                         formatted_table_matrix, matrix_signature, monetary_values, table_page_parts,
-                         write_pdf_report)
+from extrator_pdf import (Candidate, Extraction, ParagraphBlock, build_word, extract_act, find_candidates,
+                         formatted_table_matrix, matrix_signature, monetary_values, suggested_candidate,
+                         table_page_parts, write_pdf_report)
 from formatador_sefa import DEFAULT_MODEL, STYLES, show_and_open
 from links_no_word import aplicar_e_registrar, executar_com_progresso, texto_final
 
@@ -60,6 +60,68 @@ def export(extraction: Extraction, model: Path, output: Path, report: Path | Non
         write_pdf_report(extraction, report, normalize_municipalities)
 
 
+def describe_candidate(candidate: Candidate) -> tuple[str, str, str]:
+    where = f"{candidate.page}" + (f" ({candidate.column})" if candidate.column else "")
+    return where, candidate.epigraph, candidate.preview
+
+
+class ActChooser:
+    """Janela que pergunta qual dos atos com o mesmo identificador importar (Portaria nº 659, de
+    07.10.2026: uma do IGEPPS na p. 61 e outra da SEFA na p. 85 do DOE de 09.10.2026)."""
+
+    def __init__(self, root, candidates: list[Candidate]) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+        self.result: int | None = None
+        self.window = window = tk.Toplevel(root)
+        window.title("Mais de um ato com esse número")
+        window.geometry("1000x320")
+        window.transient(root)
+        frame = ttk.Frame(window, padding=10)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, wraplength=960, text=(
+            f"O PDF tem {len(candidates)} atos que correspondem ao número digitado. Escolha qual importar "
+            "(a página e o começo do texto ajudam a identificar o órgão). Ficou marcado o da Secretaria da "
+            "Fazenda, quando há um só; confira antes de continuar.")).pack(anchor="w", pady=(0, 8))
+        self.tree = tree = ttk.Treeview(frame, columns=("page", "title", "start"), show="headings",
+                                        selectmode="browse", height=min(len(candidates), 8))
+        for name, label, width in (("page", "Página", 110), ("title", "Título", 330), ("start", "Começo do texto", 520)):
+            tree.heading(name, text=label)
+            tree.column(name, width=width, stretch=name == "start")
+        for index, candidate in enumerate(candidates):
+            tree.insert("", "end", iid=str(index), values=describe_candidate(candidate))
+        tree.pack(fill="both", expand=True)
+        suggested = str(suggested_candidate(candidates))
+        tree.selection_set(suggested)
+        tree.focus(suggested)
+        tree.see(suggested)
+        tree.bind("<Double-1>", lambda event: self.confirm())
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text="Cancelar", command=self.cancel).pack(side="right")
+        ttk.Button(buttons, text="Importar este ato", command=self.confirm).pack(side="right", padx=(0, 8))
+        window.bind("<Return>", lambda event: self.confirm())
+        window.bind("<Escape>", lambda event: self.cancel())
+        window.protocol("WM_DELETE_WINDOW", self.cancel)
+
+    def confirm(self) -> None:
+        selection = self.tree.selection()
+        if selection:
+            self.result = int(selection[0]) + 1     # 1 = o primeiro do diário
+            self.window.destroy()
+
+    def cancel(self) -> None:
+        self.result = None
+        self.window.destroy()
+
+
+def choose_act(root, candidates: list[Candidate]) -> int | None:
+    chooser = ActChooser(root, candidates)
+    chooser.window.grab_set()
+    root.wait_window(chooser.window)
+    return chooser.result
+
+
 def run_gui() -> None:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -67,7 +129,7 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("SEFA 3.18 — importar ato completo do PDF")
+            self.root.title("SEFA 3.20 — importar ato completo do PDF")
             self.root.geometry("1100x780")
             self.root.minsize(800, 580)
             self.pdf_var = tk.StringVar()
@@ -181,7 +243,15 @@ def run_gui() -> None:
                 max_pages = int(self.max_pages_var.get())
                 if not 1 <= max_pages <= 100:
                     raise ValueError("Informe um número entre 1 e 100 páginas.")
-                self.extraction = extract_act(path, query, max_pages=max_pages)
+                candidates = find_candidates(path, query)
+                occurrence = None
+                if len(candidates) > 1:        # dois atos com o mesmo título: pergunta qual
+                    occurrence = choose_act(self.root, candidates)
+                    if occurrence is None:
+                        self.status.set("Análise cancelada: o PDF tem mais de um ato com esse número; "
+                                        "clique em Analisar PDF e escolha um deles.")
+                        return
+                self.extraction = extract_act(path, query, max_pages=max_pages, occurrence=occurrence)
             except Exception as error:
                 messagebox.showerror("Não foi possível analisar o PDF", str(error))
                 return
@@ -363,12 +433,21 @@ def main() -> int:
                         help="Confirma que o começo e o fim do ato foram conferidos no PDF")
     parser.add_argument("--sem-links", action="store_true",
                         help="Não cria os hyperlinks das leis, decretos etc. citados")
+    parser.add_argument("--ocorrencia", type=int,
+                        help="Quando o PDF tem mais de um ato com esse identificador: qual importar (1 = o primeiro)")
     args = parser.parse_args()
     try:
         if args.pdf:
             if not args.act or not args.output:
                 parser.error("--pdf requer --act e --output")
-            extraction = extract_act(args.pdf, args.act, max_pages=args.max_pages)
+            candidates = find_candidates(args.pdf, args.act)
+            if len(candidates) > 1 and args.ocorrencia is None:
+                print(f"Atenção: {len(candidates)} atos com esse identificador; foi usado o 1º. "
+                      "Para outro, use --ocorrencia N:", file=sys.stderr)
+                for index, candidate in enumerate(candidates, 1):
+                    where, title, start = describe_candidate(candidate)
+                    print(f"  {index}) p. {where}: {title} — {start}", file=sys.stderr)
+            extraction = extract_act(args.pdf, args.act, max_pages=args.max_pages, occurrence=args.ocorrencia)
             extraction.limits_reviewed = args.confirmar_limites
             report = None
             if args.relatorio or args.report:

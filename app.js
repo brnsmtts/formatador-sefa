@@ -103,7 +103,7 @@ worker.onmessage = ({ data }) => {
     definirMotor("pronto", "Pronto");
     $("dica-links").textContent = `Usa a tabela de links do site (${data.info.tabela_links} atos) e os links que você salvou. ` +
       "As demais citações ficam em amarelo, e a página mostra antes de salvar as que ficaram sem link, para você procurá-las no site da SEFA.";
-    $("rodape").textContent = `Formatador SEFA 3.18, versão web. PyMuPDF ${data.info.pymupdf}, ` +
+    $("rodape").textContent = `Formatador SEFA 3.20, versão web. PyMuPDF ${data.info.pymupdf}, ` +
       `pdfplumber ${data.info.pdfplumber}. O PDF é processado neste computador.`;
     return atualizar();
   }
@@ -190,12 +190,28 @@ async function analisar() {
   est.ultimoResultado = null;
   est.ocupado = true;   // já bloqueia o botão enquanto o arquivo é lido
   atualizar();
-  const buffer = await entrada.pdf.arrayBuffer();
-  let r;
-  try {
-    r = await executar("analisar", { pdf: buffer, consulta: entrada.consulta, maxPaginas: Number(entrada.maxPaginas) }, [buffer]);
-  } catch (e) {
-    r = { ok: false, erro: e.message };
+  const pedirAnalise = async (ocorrencia) => {
+    const buffer = await entrada.pdf.arrayBuffer();
+    try {
+      return await executar("analisar", { pdf: buffer, consulta: entrada.consulta,
+        maxPaginas: Number(entrada.maxPaginas), ocorrencia }, [buffer]);
+    } catch (e) {
+      return { ok: false, erro: e.message };
+    }
+  };
+  let r = await pedirAnalise(0);
+  if (r.ok && r.escolher) {               // dois ou mais atos com o mesmo número: pergunta qual (3.20)
+    const ocorrencia = await escolherAto(r);
+    if (!ocorrencia) {
+      $("analisar-erro").replaceChildren(h("div", { class: "erro-caixa", role: "status" },
+        h("strong", {}, "Análise cancelada"),
+        "O PDF tem mais de um ato com esse número. Clique em Analisar PDF e escolha um deles."));
+      atualizar();
+      return;
+    }
+    est.ocupado = true;
+    atualizar();
+    r = await pedirAnalise(ocorrencia);
   }
   if (!r.ok) {
     est.analise = null;
@@ -216,6 +232,44 @@ async function analisar() {
   desenharPrevia();
   atualizar();
   $("previa").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* Lista dos atos com o mesmo número: página, coluna, título e começo do texto. Fica marcado o
+   sugerido pelo programa (o único da Secretaria da Fazenda, quando houver). Devolve 1, 2, ... ou null. */
+function escolherAto(r) {
+  return new Promise((resolver) => {
+    const dlg = $("dlg-atos");
+    $("dlg-atos-texto").textContent = `O PDF tem ${r.candidatos.length} atos que correspondem ao número digitado. ` +
+      "Escolha qual importar; a página e o começo do texto ajudam a identificar o órgão. " +
+      "Ficou marcado o da Secretaria da Fazenda, quando há um só; confira antes de continuar.";
+    const lista = $("dlg-atos-lista");
+    lista.replaceChildren(...r.candidatos.map((c, i) => {
+      const onde = `Página ${c.pagina}` + (c.coluna ? `, coluna ${c.coluna}` : "");
+      const radio = h("input", { type: "radio", name: "ato", value: String(i + 1), checked: i === r.sugerido });
+      const linha = h("label", { class: "opcao-ato" }, radio,
+        h("span", { class: "onde" }, onde),
+        h("span", { class: "titulo" }, c.titulo, i === r.sugerido ? h("span", { class: "sugerido" }, "sugerido") : null),
+        h("span", { class: "inicio" }, c.inicio || ""));
+      linha.addEventListener("dblclick", () => { radio.checked = true; dlg.close("importar"); });
+      return linha;
+    }));
+    dlg.returnValue = "";
+    const teclaEnter = (e) => {             // Enter importa o marcado (o primeiro botão do formulário é Cancelar)
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      dlg.close("importar");
+    };
+    dlg.addEventListener("keydown", teclaEnter);
+    dlg.addEventListener("close", () => {
+      dlg.removeEventListener("keydown", teclaEnter);
+      const marcado = lista.querySelector("input:checked");
+      resolver(dlg.returnValue === "importar" && marcado ? Number(marcado.value) : null);
+    }, { once: true });
+    est.ocupado = false;
+    atualizar();
+    dlg.showModal();
+    (lista.querySelector("input:checked") || lista.querySelector("input"))?.focus();
+  });
 }
 
 function caixaErro(titulo, texto) {

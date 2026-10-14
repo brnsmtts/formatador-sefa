@@ -52,7 +52,9 @@ EPIGRAPH = re.compile(
     r"PROTOCOLO\s+ICMS|"
     # DOU (3.12): "ATO TÉCNICO CONJUNTO RFB/SUFIS/CGIBS/DIRETORIA EXECUTIVA Nº 6, DE ..."
     r"ATO\s+T[EÉ]CNICO(?:\s+CONJUNTO)?|ATO\s+DECLARAT[OÓ]RIO(?:\s+(?:EXECUTIVO|INTERPRETATIVO))?|"
-    r"MEDIDA\s+PROVIS[OÓ]RIA|(?-i:DESPACHO))\b.{0,75}\bN[º°O.]?\s*\d[\d./-]*\b",
+    r"MEDIDA\s+PROVIS[OÓ]RIA|(?-i:DESPACHO)|"
+    # DO-e/SEFA (3.19): "SOLUÇÃO DE CONSULTA N° 010/2026" (Diretoria de Tributação)
+    r"SOLU[CÇ][AÃ]O\s+DE\s+CONSULTA(?:\s+TRIBUT[AÁ]RIA)?)\b.{0,75}\bN[º°O.]?\s*\d[\d./-]*\b",
     re.I,
 )
 PUBLICATION = re.compile(
@@ -82,6 +84,9 @@ ARTICLE_LABEL = re.compile(r"^((?:Art|ART)\.?\s*\d+(?:\s*[º°])?(?:\s*[-–]\s*
 # Preâmbulo que termina na própria fórmula de ordem, sem linha "RESOLVE:" separada (DOU)
 INLINE_COMMAND_END = re.compile(r"\b(?:RESOLVEM?|DECRETAM?|DELIBERAM?|DETERMINAM?)\s*:\s*$", re.I)
 PREAMBLE_AUTHORITY = re.compile(r"^((?:O|A|OS|AS)\s+.+?)(?=,?\s+(?:no uso|no desempenho|no exercício|usando)\b|;\s*$)", re.I)
+# "O Secretário de Estado da Fazenda, considerando o disposto ..., resolve:" (Portaria nº 659/2026-SEFA, DOE de
+# 09.10.2026): a autoridade também leva negrito; só com cargo de autoridade e sem vírgula antes de "considerando".
+AUTHORITY_CONSIDERING = re.compile(r"^((?:O|A|OS|AS)\s+[^,;]+?)(?=,\s+considerando\b)", re.I)
 EDITORIAL_NEW = re.compile(r"^(?:REDA[CÇ][AÃ]O\s+DADA|ACRESCID[OA]|VIDE\s+(?:CONVALIDA[CÇ][AÃ]O|SOLU[CÇ][AÃ]O))\b", re.I)
 EDITORIAL_OLD = re.compile(r"^(?:REDA[CÇ][AÃ]O\s+ORIGINAL|REDA[CÇ][AÃ]O\s+ANTERIOR|REVOGAD[OA])\b", re.I)
 WEB_NOISE = re.compile(
@@ -113,6 +118,12 @@ CARGO = re.compile(r"^(?:GOVERNADOR[AA]?|SECRET[AÁ]RI[OA]|PRESIDENTE|MINISTR[OA
 # começar uma linha no meio de um artigo do PDF sem abrir parágrafo.
 EMENTA_START = re.compile(r"^(?:ABRE|ALTERA|DISP[OÕ]E|INSTITUI|REGULAMENTA|ESTABELECE|APROVA|REVOGA|HOMOLOGA|PRORROGA|MODIFICA|ACRESCENTA"
                           r"|(?-i:Disciplina|DISCIPLINA|Divulga|DIVULGA|Define|DEFINE|Fixa|FIXA))\b", re.I)
+
+
+# Solução de Consulta (3.19): não tem "RESOLVE:"; a ementa é só o parágrafo "EMENTA: ..." e as seções
+# têm títulos como "DA CONSULTA", "DA LEGISLAÇÃO APLICÁVEL", "DA MANIFESTAÇÃO", "DA CONCLUSÃO".
+OPINION_EPIGRAPH = re.compile(r"^SOLU[CÇ][AÃ]O\s+DE\s+CONSULTA\b", re.I)
+OPINION_SECTION = re.compile(r"^(?:DA|DO|DAS|DOS)\s+[A-ZÀ-Ý][A-ZÀ-Ý ,-]{2,70}$")
 
 
 @dataclass
@@ -300,7 +311,8 @@ def ementa_spacer_before(items: list[Item]) -> Item | None:
     if not any(item.role == "epigrafe" for item in items):
         return None
     for index, item in enumerate(items):
-        if item.role == "texto" and is_preamble(item.text):
+        # "...Estadual," antes de "resolve:" separado também é preâmbulo (a classificação já disse)
+        if item.role == "texto" and (is_preamble(item.text) or item.reason == "Preâmbulo ou considerando"):
             prefix = items[:index]
             return item if (any(p.role == "publicacao" for p in prefix)
                             and not any(p.role == "ementa" for p in prefix)) else None
@@ -349,6 +361,7 @@ def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
     last_heading = False
     after_palace = False
     last_was_name = False
+    opinion = False
     skipped: set[int] = set()
 
     for block_index, block in enumerate(blocks):
@@ -371,6 +384,7 @@ def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
                 epigraph_joined = True
             u = t.upper()
             role, reason = "epigrafe", "Tipo, número e data do ato"
+            opinion = bool(OPINION_EPIGRAPH.match(t))
             found_epigraph = True
             front = True
             seen_preamble = False
@@ -388,6 +402,12 @@ def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
             front = False
         elif HEADING.match(t):
             role, reason = "titulo", "Divisão do ato normativo"
+            front = False
+        elif opinion and OPINION_SECTION.match(t):
+            role, reason = "titulo", "Título de seção da solução de consulta"
+            front = False
+        elif opinion and front and not re.match(r"EMENTA\b", t, re.I):
+            role, reason = "texto", "Texto da solução de consulta"
             front = False
         elif last_heading and looks_uppercase(t) and not ARTICLE.match(t) and not t.endswith(('.', ';', ':')):
             role, reason = "titulo", "Nome da divisão logo após o título"
@@ -514,12 +534,23 @@ def clear_model_contents(model: Document) -> None:
     model.core_properties.comments = ""
 
 
-def add_formatted_paragraph(model: Document, item: Item):
-    """Aplica o estilo e os negritos estruturais encontrados nos exemplos SEFA."""
+def add_formatted_paragraph(model: Document, item: Item, runs: list[tuple[str, int]] | None = None):
+    """Aplica o estilo e os negritos estruturais encontrados nos exemplos SEFA. Com runs (trechos e
+    marcas: 1 = negrito, 2 = itálico), copia a formatação do diário em vez das regras de negrito
+    (Solução de Consulta: transcrições em itálico, "Art. 5º" em negrito-itálico, "Art. 229." só itálico)."""
     p = model.add_paragraph(style=item.style)
+    if runs is not None:
+        for text, marks in runs:
+            run = p.add_run(text)
+            if marks & 1:
+                run.bold = True
+            if marks & 2:
+                run.italic = True
+        return p
     label = ARTICLE_LABEL.match(item.text) if item.role == "texto" and ARTICLE.match(item.text) else None
     if not label and item.role == "texto":
-        label = PREAMBLE_AUTHORITY.match(item.text)
+        label = PREAMBLE_AUTHORITY.match(item.text) or (
+            AUTHORITY_CONSIDERING.match(item.text) if AUTHORITY_START.match(item.text) else None)
     if label:
         p.add_run(label.group(1)).bold = True
         p.add_run(item.text[label.end():])
@@ -623,7 +654,7 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("Formatador SEFA 3.18 — textos copiados")
+            self.root.title("Formatador SEFA 3.20 — textos copiados")
             self.root.geometry("1080x780")
             self.root.minsize(760, 550)
             self.model_var = tk.StringVar(value=str(DEFAULT_MODEL))

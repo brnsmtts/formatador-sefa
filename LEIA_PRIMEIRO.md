@@ -1,4 +1,4 @@
-# Formatador SEFA 3.18, versão web
+# Formatador SEFA 3.20, versão web
 
 É a tela **Importar ato do PDF** rodando inteira no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
 
@@ -32,7 +32,7 @@ O primeiro acesso baixa cerca de 41 MB (Python e bibliotecas). Nos seguintes, o 
 ## Atualizar para uma nova versão do formatador
 
 1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
-2. Em `worker.js`, aumente o número em `const VERSAO = "3.18-web11";` (por exemplo, para `3.19-web1`). Assim os navegadores não usam os arquivos antigos guardados.
+2. Em `worker.js`, aumente o número em `const VERSAO = "3.20-web1";` (por exemplo, para `3.20-web2` ou `3.21-web1`). Assim os navegadores não usam os arquivos antigos guardados.
 3. Publique de novo.
 
 Se uma versão nova passar a importar outro módulo, acrescente o nome do arquivo à lista `ARQUIVOS` em `worker.js`.
@@ -41,6 +41,18 @@ O `web_ponte.py` é o único arquivo próprio da web. Ele:
 - desenha os recortes de imagem com o PyMuPDF, porque o pypdfium2 do pdfplumber não tem edição para esta versão do Pyodide;
 - faz os links consultarem só a tabela;
 - troca as janelas e diálogos pelo envio e download de arquivos.
+
+## Versão 3.20 (atos com o mesmo número)
+
+Os módulos `extrator_pdf.py`, `formatador_sefa.py` e `importar_pdf.py` vêm da versão 3.20 do programa do computador, sem alteração (veja o ALTERACOES_V3_20.txt dele). Quando o número digitado corresponde a mais de um ato do PDF, Analisar PDF abre a lista dos atos, com a página, a coluna, o título e o começo do texto de cada um, e você escolhe qual importar. Fica marcado o da Secretaria da Fazenda, quando há um só entre eles. Enter ou duplo clique importa; Esc cancela.
+
+O `links_legislacao.py` do site continua sendo o da 3.18 com o ajuste do link até o órgão; a 3.20 do computador voltou a ter o arquivo sem esse ajuste.
+
+## Versão 3.19 (Solução de Consulta)
+
+Na 3.19, os módulos `extrator_pdf.py`, `formatador_sefa.py`, `importar_pdf.py` e `links_no_word.py` passaram a vir da versão 3.19 do programa do computador, sem alteração. Ela reconhece a Solução de Consulta e copia do diário o negrito e o itálico das transcrições (veja o ALTERACOES_V3_19.txt do programa do computador). Na versão web, juntar ou dividir parágrafos na visualização do Word mantém esse negrito e itálico.
+
+O `links_legislacao.py` do site é o da 3.18 com o ajuste do link até o órgão ("Portaria nº 293/2026-SEFA/GS"); a 3.19 do computador ainda não tem esse ajuste.
 
 ## PyMuPDF baixado do PyPI
 
