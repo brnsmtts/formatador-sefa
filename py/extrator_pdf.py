@@ -512,7 +512,9 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
             new_start = False
         too_far = bool(paragraphs and line["top"] - previous_bottom > 6)
         if (paragraphs and not new_start and not too_far
-                and paragraphs[-1].endswith("\xad") and text[:1].islower()):
+                and paragraphs[-1].endswith("\xad")
+                and (text[:1].islower() or (text[:1].isupper() and paragraphs[-1][-2:-1].isupper()))):
+            # hífen invisível do diário: "SO\xad" + "CIOECONÔMICO" também se une, sem espaço
             paragraphs[-1] = paragraphs[-1][:-1] + text
             members[-1].append(line)
         elif paragraphs and not new_start and not too_far and (

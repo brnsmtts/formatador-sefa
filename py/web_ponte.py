@@ -129,20 +129,34 @@ def endereco_busca(o) -> str:
     return ll.CONFIG["pagina_busca"] + "/resultados?" + "&".join(f"{k}={v}" for k, v in params.items() if v != "")
 
 
-def _pendentes_para_busca() -> tuple[list[dict], list[str]]:
+def endereco_planalto(o) -> str:
+    """Endereço provável do ato no Planalto, só para os que a citação diz federais
+    (a página não consegue abrir o Planalto para conferir; quem confere é a pessoa)."""
+    federal = o.esfera == "FEDERAL" or o.tipo in ll.SEMPRE_FEDERAIS
+    if o.tipo not in ll.TIPOS_PLANALTO or not federal:
+        return ""
+    candidatos = ll.planalto_candidatos(o.tipo, o.numero, o.ano)
+    return candidatos[0] if candidatos else ""
+
+
+def _pendentes_para_busca() -> tuple[list[dict], list[str], list[str]]:
+    """(citações sem link para a busca assistida, as de tipo fora do site, as marcadas como sem link)."""
     res = _ULTIMO_LINKS.get("res")
     if res is None:
-        return [], []
-    busca, fora = [], []
+        return [], [], []
+    busca, fora, marcados = [], [], []
     for chave, a in res.atos.items():
         if a["url"]:
             continue
         if a["sit"] == ll.S_FORA_SITE:
             fora.append(a["exemplo"])
             continue
+        if a["sit"] == ll.S_SEM_LINK:
+            marcados.append(a["exemplo"])
+            continue
         busca.append({"chave": chave, "exemplo": a["exemplo"], "qtd": a["qtd"], "situacao": a["sit"],
-                      "busca": endereco_busca(a["o"])})
-    return busca, fora
+                      "busca": endereco_busca(a["o"]), "planalto": endereco_planalto(a["o"])})
+    return busca, fora, marcados
 
 
 def definir_links_usuario(texto_json: str) -> str:
@@ -150,7 +164,8 @@ def definir_links_usuario(texto_json: str) -> str:
         dados = json.loads(texto_json or "{}")
         LINKS_USUARIO.clear()
         LINKS_USUARIO.update({str(k): str(v) for k, v in dados.items()
-                              if str(v).startswith(("https://", "http://")) and "|" in str(k)})
+                              if "|" in str(k) and (str(v).startswith(("https://", "http://"))
+                                                     or str(v) == ll.SEM_LINK)})
         return _json(quantidade=len(LINKS_USUARIO))
     except Exception as exc:
         return _erro(exc)
@@ -642,17 +657,17 @@ def gerar(saida: str, modelo: str | None, relatorio: bool, links: bool, links_us
         if relatorio_p is not None:
             _anexar_ao_relatorio(relatorio_p, _secao_removidos(e))
         registro: list[str] = []
-        resumo_txt, aviso, busca, fora = "", "", [], []
+        resumo_txt, aviso, busca, fora, marcados = "", "", [], [], []
         if links:
             resumo = lnw.aplicar_e_registrar(saida_p, relatorio_p, registro.append)
             resumo_txt = resumo.frase()
             if resumo.concluido:
-                busca, fora = _pendentes_para_busca()
+                busca, fora, marcados = _pendentes_para_busca()
             else:
                 aviso = resumo.aviso
         return _json(word=str(saida_p), relatorio=str(relatorio_p) if relatorio_p else "",
                      resumo_links=resumo_txt, aviso_links=aviso, pendentes_busca=busca,
-                     fora_do_site=fora, registro=registro)
+                     fora_do_site=fora, sem_link_marcados=marcados, registro=registro)
     except Exception as exc:
         return _erro(exc)
 

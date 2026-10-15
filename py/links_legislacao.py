@@ -180,7 +180,9 @@ S_FORA_SITE = "Tipo de ato que não consta no site - não buscado"
 S_SITE_OFF = "Não buscado (site fora do ar / sem conexão)"
 S_INTERROMPIDO = "Não buscado (busca interrompida)"
 S_OUTRO_ANO = "Não encontrado: no site há ato com esse número, mas de outro ano"
-SEM_DESTAQUE = {S_FORA_SITE}
+S_SEM_LINK = "Sem link: marcado na tabela como ato sem link"
+SEM_LINK = "-"        # na tabela, no lugar do endereço: o ato não tem link (fica sem link e sem destaque)
+SEM_DESTAQUE = {S_FORA_SITE, S_SEM_LINK}
 
 
 # =============================================================================
@@ -662,9 +664,18 @@ def carregar_tabela():
     return d
 
 
+def url_da_tabela(valor, o):
+    """Na tabela, o endereço vem completo ou na forma curta "=idAto" (a da montagem da tabela),
+    que vira o mesmo endereço que o site gera ao abrir o ato."""
+    m = re.fullmatch(r"=(\d+)", valor.strip())
+    return montar_link(int(m.group(1)), numeroAto=o.numero, ano=o.ano) if m else valor
+
+
 def salvar_tabela(d):
     linhas = ["# Tabela de links de legislação (Links de Legislação - SEFA/PA)",
               "# Formato: Tipo|Número|Ano[|Esfera]<TAB>endereço  (número sem pontos; ano com 4 dígitos ou vazio;\n# Esfera = Federal, Estadual ou CGIBS, só quando a citação diz a esfera)",
+              "# Endereço \"-\" = o ato não tem link: a citação fica sem link e sem destaque amarelo.",
+              "# Endereço \"=58941\" = o ato de idAto=58941 no site da SEFA (forma curta usada pelo MONTAR_TABELA_LINKS).",
               "# Pode editar à mão: as linhas daqui têm prioridade sobre a busca no site."]
     linhas += [f"{k}\t{v}" for k, v in d.items()]
     ARQ_TABELA.write_text("\n".join(linhas) + "\n", encoding="utf-8")
@@ -1136,6 +1147,7 @@ def criar_links(doc, log=print, parar=None):
 
     # 1) localizar citações
     ocorrs, anos_por_ato, nao_vazios = [], {}, 0
+    proprio = []      # (tipo, número, ano) do próprio ato, lido na epígrafe
 
     def nova(p, ini, fim, tipo, num_txt, ano, texto, esfera):
         o = Ocorrencia()
@@ -1196,6 +1208,10 @@ def criar_links(doc, log=print, parar=None):
                 continue
             tipo_txt = m.group("tipo")
             if eh_epigrafe(tipo_txt):
+                # a primeira epígrafe no começo de um parágrafo é o próprio ato ("RESOLUÇÃO Nº 046, DE ...")
+                if not proprio and not txt[:m.start()].strip(BARREIRA + " \t"):
+                    proprio.append((canon_tipo(tipo_txt), norm_numero(m.group("num")) if m.group("num") else "",
+                                    ano_completo(m.group("ano2") or m.group("ano4") or m.group("ano5") or "")))
                 continue
             fim = m.end() if CONFIG["incluir_data_no_link"] else m.end("nucleo")
             nucleo = txt[m.start("nucleo"):m.start("orgao")] if m.group("orgao") else m.group("nucleo")
@@ -1219,6 +1235,21 @@ def criar_links(doc, log=print, parar=None):
             if esf:
                 nova(p, m.start(), m.end(), "Constituição", "", "", m.group(0), esf)
                 ocupados.append((m.start(), m.end()))
+
+    # o ato que cita a si mesmo ("conforme RESOLUÇÃO Nº 046, DE 10 DE AGOSTO DE 2026") não recebe
+    # link nem destaque e não é procurado no site
+    if proprio and proprio[0][1]:
+        tipo_p, num_p, ano_p = proprio[0]
+
+        def eh_proprio(o):
+            return (o.tipo == tipo_p and o.numero == num_p and (o.ano == ano_p or not o.ano)
+                    and not (o.esfera and esf_doc and o.esfera != esf_doc))
+
+        auto = [o for o in ocorrs if eh_proprio(o)]
+        if auto:
+            ocorrs = [o for o in ocorrs if not eh_proprio(o)]
+            log(f"Citação do próprio ato ({auto[0].texto}): sem link"
+                + (f" ({len(auto)} ocorrências)." if len(auto) > 1 else "."))
 
     if not ocorrs:
         log("Nenhuma citação de ato sem link foi encontrada.")
@@ -1251,8 +1282,10 @@ def criar_links(doc, log=print, parar=None):
     a_buscar = []
     for chave, a in atos.items():
         o = a["o"]
-        if chave in tabela:
-            a["url"], a["sit"] = tabela[chave], S_TABELA
+        if chave in tabela and tabela[chave] == SEM_LINK:
+            a["sit"] = S_SEM_LINK
+        elif chave in tabela:
+            a["url"], a["sit"] = url_da_tabela(tabela[chave], o), S_TABELA
         elif o.tipo not in TIPOS_NO_SITE and not pode_planalto(o):
             a["sit"] = S_FORA_SITE
         else:
