@@ -129,7 +129,7 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("SEFA 3.20 — importar ato completo do PDF")
+            self.root.title("SEFA 3.24 — importar ato completo do PDF")
             self.root.geometry("1100x780")
             self.root.minsize(800, 580)
             self.pdf_var = tk.StringVar()

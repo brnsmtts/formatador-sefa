@@ -122,7 +122,7 @@ input[type="number"]:not(.editor-word *) { width: 6.5em; }
 .motivos { margin: 10px 0 0; padding-left: 18px; color: var(--grafite); font-size: 13.5px; }
 .resultado { margin-top: 14px; padding: 12px 14px; background: var(--verde-fundo); border-radius: 4px; font-size: 14px; }
 .resultado h3 { margin: 0 0 6px; font-size: 15px; color: var(--verde); }
-.resultado p { margin: 6px 0; }
+.resultado p { margin: 6px 0; overflow-wrap: anywhere; }
 .resultado .botoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .resultado .botao { padding: 6px 12px; font-size: 14px; }
 .resultado pre { white-space: pre-wrap; font: 13px/1.45 var(--sans); margin: 8px 0 0; color: var(--grafite); }
@@ -351,6 +351,86 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
 .dlg-recorte img { display: block; max-width: none; }
 .dlg-recorte h3 { margin: 0 0 10px; font: 600 18px/1.3 var(--serif); }
 
+/* Abas do topo: Formatar ato / Aplicar alterações */
+.modos { display: flex; gap: 8px; padding: 16px 28px 0; }
+.modo {
+  flex: 0 1 320px; display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer;
+  padding: 10px 16px; border: 1px solid var(--linha); border-radius: var(--raio); background: #EEF0EC;
+}
+.modo strong { font: 600 17px/1.25 var(--serif); }
+.modo span { font-size: 13px; color: var(--grafite); }
+.modo:hover:not([aria-selected="true"]) { background: var(--papel); }
+.modo[aria-selected="true"] { background: var(--tinta); border-color: var(--tinta); color: #fff; }
+.modo[aria-selected="true"] span { color: #D5DBE8; }
+@media (max-width: 920px) { .modos { padding: 12px 16px 0; } .modo { flex: 1 1 0; } }
+@media (max-width: 480px) { .modo span { display: none; } .modo { padding: 9px 12px; } }
+
+/* Aplicar alterações (Consolidador) */
+.cons-datas { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.cons-links { margin: 10px 0 0; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cons-botoes-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.cons-botoes-2 .botao { padding: 9px 10px; }
+.cons-cabeca { display: flex; gap: 6px 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }
+.cons-resumo { margin: 0; font-weight: 700; }
+.cons-status { margin: 0; color: var(--grafite); font-size: 14px; }
+.cons-aviso {
+  display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 12px; padding: 12px 14px;
+  background: var(--verde-fundo); border-left: 4px solid var(--verde); border-radius: 4px;
+}
+.cons-aviso.pendente { background: #FFF8D6; border-left-color: var(--marca-borda); }
+.cons-aviso pre { margin: 0; flex: 1 1 20rem; white-space: pre-wrap; font: 14px/1.5 var(--sans); }
+.cons-aviso .botao { padding: 6px 12px; font-size: 14px; }
+.cons-lista { max-height: 17.5rem; overflow: auto; background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio); }
+.cons-tabela { width: 100%; border-collapse: collapse; font-size: 14px; }
+.cons-tabela th {
+  position: sticky; top: 0; z-index: 1; background: #F0F2EE; text-align: left; white-space: nowrap;
+  padding: 7px 10px; border-bottom: 1px solid var(--linha); font-size: 13px;
+}
+.cons-tabela td { padding: 6px 10px; border-bottom: 1px solid #E6E9E3; vertical-align: top; }
+.cons-tabela tbody tr { cursor: pointer; }
+.cons-tabela tbody tr:hover { background: #F5F7FA; }
+.cons-tabela tbody tr[aria-selected="true"] { background: #EEF1F6; box-shadow: inset 3px 0 0 var(--tinta); }
+.cons-tabela td.destino { min-width: 13rem; }
+.cons-tabela td.origem { min-width: 9rem; color: var(--grafite); }
+.cons-tabela td.efeitos { white-space: nowrap; }
+.cons-tabela input[type="checkbox"] { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--tinta); cursor: pointer; }
+.situacao { font-size: 12.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+.situacao.pronto { background: var(--verde-fundo); color: var(--verde); }
+.situacao.revisar { background: var(--marca); color: #5C4700; }
+.situacao.ja-consta { background: #E3EAF4; color: #2D4C78; }
+.situacao.outro-ato { background: #ECEDEA; color: #5B6158; }
+.cons-revisao { margin-top: 14px; background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio); padding: 16px 18px 18px; }
+.cons-rev-topo { display: flex; gap: 10px 14px; align-items: flex-start; flex-wrap: wrap; }
+.cons-rev-texto { flex: 1 1 20rem; min-width: 0; }
+.cons-rev-texto h3 { margin: 0 0 4px; font: 600 18px/1.3 var(--serif); overflow-wrap: anywhere; }
+.cons-rev-texto p { margin: 0; font-size: 14px; color: var(--grafite); white-space: pre-wrap; }
+.cons-rev-botoes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cons-rev-botoes .botao { padding: 7px 14px; font-size: 14px; }
+.cons-sujo { font-size: 13px; font-weight: 700; color: #5C4700; background: var(--marca); padding: 3px 9px; border-radius: 99px; }
+.cons-erro { margin: 10px 0 0; padding: 10px 12px; background: var(--vermelho-fundo); border-left: 4px solid var(--vermelho); border-radius: 4px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cons-corrigir { margin: 10px 0 0; border: 1px solid var(--linha); border-radius: 4px; padding: 8px 12px; background: #F6F7F4; }
+.cons-corrigir summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+.cons-campos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 10px 0 4px; }
+.cons-campos label { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; font-weight: 700; }
+.cons-campos label :is(input, select) { font-weight: 400; }
+.cons-campos .cons-largo { grid-column: 1 / -1; }
+@media (max-width: 640px) { .cons-campos, .cons-datas { grid-template-columns: 1fr; } }
+.cons-abas { margin-top: 14px; flex-wrap: wrap; }
+.cons-abas .aba { font-size: 13.5px; padding: 7px 12px; }
+.cons-painel { border: 1px solid var(--linha); border-radius: 0 var(--raio) var(--raio) var(--raio); background: #F9FBFD; }
+.cons-texto {
+  display: block; width: 100%; margin: 0; min-height: 14rem; max-height: 46vh; overflow: auto; padding: 12px 14px;
+  font: 15.5px/1.6 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; border: 0; background: transparent;
+}
+textarea.cons-texto { resize: vertical; height: 16rem; max-height: none; background: var(--papel); border-radius: 0 var(--raio) var(--raio) var(--raio); }
+.cons-acoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.cons-acoes .botao { padding: 7px 14px; font-size: 14px; }
+.cons-revisao.ampliada { position: fixed; inset: 12px; z-index: 40; margin: 0; overflow: auto; box-shadow: 0 20px 50px rgba(0, 0, 0, .3); }
+.cons-revisao.ampliada .cons-texto { max-height: none; min-height: 52vh; }
+body.cons-ampliada { overflow: hidden; }
+body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39; background: rgba(29, 42, 68, .45); }
+.cons-resultado .botao { padding: 6px 12px; font-size: 14px; }
+
 .rodape { padding: 0 28px 28px; color: var(--grafite); font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .motor .ponto { animation: none !important; } }
 </style>
@@ -358,13 +438,21 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
 <body>
 <header class="topo">
   <h1>Formatador SEFA</h1>
-  <span class="sub">Importar ato do PDF do diário oficial</span>
+  <span class="sub" id="sub-modo">Importar ato do PDF do diário oficial</span>
   <div class="motor" id="motor" data-estado="carregando" role="status" aria-live="polite">
     <span class="ponto" aria-hidden="true"></span><span id="motor-texto">Preparando o formatador</span>
   </div>
 </header>
+<nav class="modos" role="tablist" aria-label="O que você quer fazer">
+  <button class="modo" type="button" role="tab" id="aba-formatar" aria-controls="modo-formatar" aria-selected="true">
+    <strong>Formatar ato</strong><span>PDF do diário oficial → Word no padrão SEFA</span>
+  </button>
+  <button class="modo" type="button" role="tab" id="aba-consolidar" aria-controls="modo-consolidar" aria-selected="false" tabindex="-1">
+    <strong>Aplicar alterações</strong><span>Ato alterador → legislação atualizada no Word</span>
+  </button>
+</nav>
 
-<main class="grade">
+<main class="grade" id="modo-formatar" role="tabpanel" aria-labelledby="aba-formatar">
   <div class="passos">
     <section class="passo" aria-labelledby="p1">
       <h2 id="p1"><span class="n">1</span>PDF do diário oficial</h2>
@@ -428,6 +516,157 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
       <h2>A prévia do ato aparece aqui</h2>
       <p>Escolha o PDF e digite o número do ato. Cada parágrafo aparece com o estilo do modelo na margem; os trechos que o programa pede para conferir ficam marcados em amarelo. Clique em um parágrafo ou célula para corrigir antes de gerar o Word.</p>
       <p>O PDF é lido neste computador. Nenhum arquivo é enviado para servidores.</p>
+    </div>
+  </section>
+</main>
+
+<main class="grade" id="modo-consolidar" role="tabpanel" aria-labelledby="aba-consolidar" hidden>
+  <div class="passos">
+    <section class="passo" aria-labelledby="c1">
+      <h2 id="c1"><span class="n">1</span>Legislação a ser alterada</h2>
+      <label class="soltar" id="cons-soltar-base">
+        <input type="file" id="cons-arquivo-base" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+        <strong>Arraste o Word aqui</strong>
+        <span class="dica">ou clique para escolher (.docx com o texto atual)</span>
+      </label>
+      <div class="arquivo" id="cons-base-escolhido" hidden>
+        <span class="nome"><span id="cons-base-nome"></span> <span class="tam" id="cons-base-tam"></span></span>
+        <button class="ligacao" type="button" id="cons-trocar-base">Trocar</button>
+      </div>
+    </section>
+
+    <section class="passo" aria-labelledby="c2">
+      <h2 id="c2"><span class="n">2</span>Ato alterador</h2>
+      <label class="soltar" id="cons-soltar-alterador">
+        <input type="file" id="cons-arquivo-alterador" accept=".docx,.doc,.pdf,.txt,.html,.htm">
+        <strong>Arraste o ato aqui</strong>
+        <span class="dica">ou clique para escolher (Word, PDF com texto, TXT ou HTML)</span>
+      </label>
+      <div class="arquivo" id="cons-alterador-escolhido" hidden>
+        <span class="nome"><span id="cons-alterador-nome"></span> <span class="tam" id="cons-alterador-tam"></span></span>
+        <button class="ligacao" type="button" id="cons-trocar-alterador">Trocar</button>
+      </div>
+    </section>
+
+    <section class="passo" aria-labelledby="c3">
+      <h2 id="c3"><span class="n">3</span>Analisar alterações</h2>
+      <label class="campo" for="cons-ato">Ato alterador</label>
+      <input type="text" id="cons-ato" placeholder="Lido do ato, ex.: Lei 11.233/25" autocomplete="off">
+      <div class="cons-datas">
+        <div><label class="campo" for="cons-publicacao">Publicação</label>
+          <input type="text" id="cons-publicacao" placeholder="dd/mm/aaaa" inputmode="numeric" autocomplete="off"></div>
+        <div><label class="campo" for="cons-efeitos">Efeitos gerais</label>
+          <input type="text" id="cons-efeitos" placeholder="dd/mm/aaaa" inputmode="numeric" autocomplete="off"></div>
+      </div>
+      <p class="dica">Em branco, o programa lê do ato. Datas: dd/mm/aaaa.</p>
+      <label class="campo" for="cons-ano-notas">Ano nas notas</label>
+      <select id="cons-ano-notas">
+        <option value="auto">Igual às notas recentes da base</option>
+        <option value="2">2 dígitos (LC 238/26 · 01.01.27)</option>
+        <option value="4">4 dígitos (LC 238/2026 · 01.01.2027)</option>
+      </select>
+      <button class="botao principal largo" type="button" id="cons-analisar" disabled>Analisar alterações</button>
+      <p class="cons-links">
+        <button class="ligacao" type="button" id="cons-exemplo">Exemplo de uso</button>
+        <span aria-hidden="true">·</span>
+        <button class="ligacao" type="button" id="cons-abrir-plano">Abrir plano salvo</button>
+        <input type="file" id="cons-arquivo-plano" accept=".json,application/json" hidden>
+      </p>
+      <div id="cons-analisar-erro"></div>
+    </section>
+
+    <section class="passo" aria-labelledby="c4" id="cons-passo-gerar" aria-disabled="true">
+      <h2 id="c4"><span class="n">4</span>Gerar Word atualizado</h2>
+      <label class="opcao"><input type="checkbox" id="cons-realcar">
+        <span>Realçar alterações em amarelo <small>Textos novos e notas desta geração. O histórico mantém o verde.</small></span></label>
+      <button class="botao principal largo" type="button" id="cons-gerar" disabled>Gerar Word atualizado</button>
+      <div class="cons-botoes-2">
+        <button class="botao" type="button" id="cons-relatorio" disabled>Ver relatório</button>
+        <button class="botao" type="button" id="cons-salvar-plano" disabled>Salvar plano</button>
+      </div>
+      <ul class="motivos" id="cons-motivos" hidden></ul>
+      <div id="cons-saida"></div>
+    </section>
+  </div>
+
+  <section class="previa cons-area" aria-label="Propostas de alteração">
+    <div class="vazio" id="cons-vazio">
+      <h2>As propostas de alteração aparecem aqui</h2>
+      <p>Escolha a legislação em Word e o ato que a altera. O programa localiza cada dispositivo alterado, acrescido, revogado ou renumerado e monta uma proposta para cada mudança, com a redação atual, a nova redação, o trecho do ato e os efeitos.</p>
+      <p>Confira as propostas, corrija o que for preciso e gere uma cópia atualizada do Word, com as notas e o histórico no padrão da base. Os arquivos são lidos neste computador; nada é enviado para servidores, e os originais não são alterados.</p>
+      <p>Para ver como funciona, clique em <button class="ligacao" type="button" id="cons-exemplo-2">Exemplo de uso</button>.</p>
+    </div>
+    <div id="cons-trabalho" hidden>
+      <div class="cons-cabeca">
+        <p class="cons-resumo" id="cons-resumo"></p>
+        <p class="cons-status" id="cons-status" role="status" aria-live="polite"></p>
+      </div>
+      <div class="cons-aviso" id="cons-aviso" hidden>
+        <pre id="cons-aviso-texto"></pre>
+        <button class="botao" type="button" id="cons-aviso-ok">Entendi</button>
+      </div>
+      <div class="cons-lista" tabindex="0" role="region" aria-label="Lista de propostas">
+        <table class="cons-tabela">
+          <thead><tr><th scope="col">Aplicar</th><th scope="col">Nº</th><th scope="col">Situação</th><th scope="col">Ação</th>
+            <th scope="col">Destino</th><th scope="col">Efeitos</th><th scope="col">Origem</th></tr></thead>
+          <tbody id="cons-linhas"></tbody>
+        </table>
+      </div>
+
+      <section class="cons-revisao" id="cons-revisao" aria-labelledby="cons-rev-titulo">
+        <div class="cons-rev-topo">
+          <div class="cons-rev-texto">
+            <h3 id="cons-rev-titulo">Nenhuma proposta selecionada</h3>
+            <p id="cons-rev-motivo"></p>
+          </div>
+          <div class="cons-rev-botoes">
+            <span class="cons-sujo" id="cons-sujo" hidden>Correção não validada</span>
+            <button class="botao" type="button" id="cons-ampliar" aria-pressed="false">Ampliar</button>
+            <button class="botao principal" type="button" id="cons-validar">Validar correção</button>
+          </div>
+        </div>
+        <p class="dica" id="cons-rev-dica"></p>
+        <div class="cons-erro" id="cons-rev-erro" role="alert" hidden></div>
+        <details class="cons-corrigir" id="cons-corrigir">
+          <summary>Corrigir ação, destino e datas</summary>
+          <div class="cons-campos">
+            <label>Ação
+              <select id="cons-acao">
+                <option>Substituir redação</option><option>Acrescentar dispositivo</option>
+                <option>Revogar dispositivo</option><option>Renumerar parágrafo único</option>
+              </select></label>
+            <label>Corpo <input type="text" id="cons-corpo" list="cons-corpos" autocomplete="off"></label>
+            <label class="cons-largo">Destino completo
+              <input type="text" id="cons-destino" list="cons-destinos" placeholder="art. 2º / § 1º / inciso II" autocomplete="off"></label>
+            <label>Alcance
+              <select id="cons-alcance"><option>Somente este texto</option><option>Dispositivo completo</option></select></label>
+            <label>Efeitos desta mudança <input type="text" id="cons-efeitos-op" placeholder="dd/mm/aaaa" autocomplete="off"></label>
+            <label>Novo § para renumeração <input type="text" id="cons-renumerar" autocomplete="off"></label>
+          </div>
+          <datalist id="cons-corpos"></datalist>
+          <datalist id="cons-destinos"></datalist>
+        </details>
+        <div class="abas cons-abas" role="tablist" aria-label="Textos da proposta">
+          <button class="aba" type="button" role="tab" data-aba="antes" aria-selected="true">Texto atual na base</button>
+          <button class="aba" type="button" role="tab" data-aba="nova" aria-selected="false">Nova redação — editar aqui</button>
+          <button class="aba" type="button" role="tab" data-aba="trecho" aria-selected="false">Trecho do ato alterador</button>
+          <button class="aba" type="button" role="tab" data-aba="notas" aria-selected="false">Efeitos e remissões</button>
+          <button class="aba" type="button" role="tab" data-aba="obs" aria-selected="false">Observações</button>
+        </div>
+        <div class="cons-painel">
+          <pre class="cons-texto" id="cons-antes" data-painel="antes" tabindex="0"></pre>
+          <textarea class="cons-texto" id="cons-nova" data-painel="nova" hidden spellcheck="true"
+            aria-label="Nova redação, uma linha por dispositivo, com o rótulo"></textarea>
+          <pre class="cons-texto" id="cons-trecho" data-painel="trecho" tabindex="0" hidden></pre>
+          <pre class="cons-texto" id="cons-notas" data-painel="notas" tabindex="0" hidden></pre>
+          <pre class="cons-texto" id="cons-obs" data-painel="obs" tabindex="0" hidden></pre>
+        </div>
+        <div class="cons-acoes">
+          <button class="botao" type="button" id="cons-adicionar">Adicionar mudança manual</button>
+          <button class="botao" type="button" id="cons-remover">Remover proposta</button>
+          <button class="botao" type="button" id="cons-aprovar">Aprovar extração do PDF/HTML</button>
+        </div>
+      </section>
     </div>
   </section>
 </main>
@@ -506,5 +745,6 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
 <script src="lib/jszip.min.js"></script>
 <script src="lib/docx-preview.min.js"></script>
 <script src="app.js"></script>
+<script src="consolidador.js"></script>
 </body>
 </html>

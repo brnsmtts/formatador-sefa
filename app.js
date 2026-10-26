@@ -104,8 +104,9 @@ worker.onmessage = ({ data }) => {
     definirMotor("pronto", "Pronto");
     $("dica-links").textContent = `Usa a tabela de links do site (${data.info.tabela_links} atos) e os links que você salvou. ` +
       "As demais citações ficam em amarelo, e a página mostra antes de salvar as que ficaram sem link, para você procurá-las no site da SEFA.";
-    $("rodape").textContent = `Formatador SEFA 3.20, versão web 3. PyMuPDF ${data.info.pymupdf}, ` +
+    $("rodape").textContent = `Formatador SEFA 3.24, versão web. PyMuPDF ${data.info.pymupdf}, ` +
       `pdfplumber ${data.info.pdfplumber}. O PDF é processado neste computador.`;
+    if (typeof aoProntoConsolidador === "function") aoProntoConsolidador(data.info);
     return atualizar();
   }
   if (data.tipo === "falha") {
@@ -167,7 +168,11 @@ const soltar = $("soltar");
 ["dragleave", "drop"].forEach((t) => soltar.addEventListener(t, () => soltar.classList.remove("sobre")));
 soltar.addEventListener("drop", (e) => { e.preventDefault(); escolherPdf(e.dataTransfer.files[0]); });
 document.addEventListener("dragover", (e) => e.preventDefault());
-document.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]); });
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  // na aba Aplicar alterações, soltar fora das áreas próprias não escolhe o PDF do formatador
+  if (document.body.dataset.modo !== "consolidar" && e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]);
+});
 
 /* ---------------- passo 2: analisar ---------------- */
 $("consulta").addEventListener("input", atualizar);
@@ -194,7 +199,7 @@ async function analisar() {
   const pedirAnalise = async (ocorrencia) => {
     const buffer = await entrada.pdf.arrayBuffer();
     try {
-      return await executar("analisar", { pdf: buffer, consulta: entrada.consulta,
+      return await executar("analisar", { pdf: buffer, nome: entrada.pdf.name || "", consulta: entrada.consulta,
         maxPaginas: Number(entrada.maxPaginas), ocorrencia }, [buffer]);
     } catch (e) {
       return { ok: false, erro: e.message };
@@ -403,6 +408,7 @@ const TIPOS_ARQUIVO = {
   docx: { description: "Documento do Word", accept: { [TIPO_DOCX]: [".docx"] } },
   html: { description: "Relatório de conferência", accept: { "text/html": [".html"] } },
   tsv: { description: "Linhas da tabela de links", accept: { "text/tab-separated-values": [".tsv"] } },
+  json: { description: "Plano de consolidação", accept: { "application/json": [".json"] } },
 };
 
 async function escolherDestino(nome, tipo) {
@@ -1528,6 +1534,7 @@ function atualizar() {
   } else {
     motivos.hidden = true;
   }
+  if (typeof atualizarConsolidador === "function") atualizarConsolidador();
 }
 
 desenharLinksSalvos();

@@ -44,6 +44,9 @@ STYLES = {
     "redacao_antiga": ("a23_redacao_ant", "a12_rdant"),
 }
 
+# Sinal de número: "Nº", "N°", "No", "N.", e também com dois sinais, "N.º" (DO-e/SEFA nº 657, de 20.10.2026:
+# "PORTARIA N.º 737/2026 - SEFA GS"), "Nº." e "N.°". Antes só um sinal era aceito e a portaria não era achada.
+NUMBER_SIGN = r"N(?:[º°O]\.?|\.\s*[º°O]?)?"
 EPIGRAPH = re.compile(
     r"^(?:LEI(?:\s+COMPLEMENTAR)?|DECRETO(?:\s+LEGISLATIVO)?|"
     r"PORTARIA(?:\s+CONJUNTA)?|INSTRU[CÇ][AÃ]O\s+NORMATIVA|"
@@ -54,16 +57,21 @@ EPIGRAPH = re.compile(
     r"ATO\s+T[EÉ]CNICO(?:\s+CONJUNTO)?|ATO\s+DECLARAT[OÓ]RIO(?:\s+(?:EXECUTIVO|INTERPRETATIVO))?|"
     r"MEDIDA\s+PROVIS[OÓ]RIA|(?-i:DESPACHO)|"
     # DO-e/SEFA (3.19): "SOLUÇÃO DE CONSULTA N° 010/2026" (Diretoria de Tributação)
-    r"SOLU[CÇ][AÃ]O\s+DE\s+CONSULTA(?:\s+TRIBUT[AÁ]RIA)?)\b.{0,75}\bN[º°O.]?\s*\d[\d./-]*\b",
+    r"SOLU[CÇ][AÃ]O\s+DE\s+CONSULTA(?:\s+TRIBUT[AÁ]RIA)?|"
+    # DOU (3.21): "EMENDA CONSTITUCIONAL Nº 140" (Atos do Congresso Nacional)
+    r"EMENDA\s+CONSTITUCIONAL)\b.{0,75}\b" + NUMBER_SIGN + r"\s*\d[\d./-]*\b",
     re.I,
 )
 PUBLICATION = re.compile(
     r"^(?:PUBLICAD[OA]|REPUBLICAD[OA]|RETIFICAD[OA]|ALTERAD[OA]\s+PELOS?|"
-    r"EDI[CÇ][AÃ]O\s+(?:EXTRA|N[º°O.]?\s*\d)|"
+    r"EDI[CÇ][AÃ]O\s+(?:EXTRA|" + NUMBER_SIGN + r"\s*\d)|"
     r"D(?:O\s*[-–]?\s*E|OE|OU)\b|VIDE\s+(?:DECRETO|LEI|IN|PORTARIA))\b",
     re.I,
 )
-PREAMBLE = re.compile(r"^(?:CONSIDERANDO\b|(?:O|A|OS|AS)\s+.{3,600}?\b(?:NO USO|NO DESEMPENHO|NO EXERC[IÍ]CIO|USANDO|FAZ SABER|COM FUNDAMENTO)\b)", re.I)
+# Lei (3.24): "A ASSEMBLEIA LEGISLATIVA DO ESTADO DO PARÁ estatui e eu sanciono a seguinte Lei:" e "O PRESIDENTE
+# DA REPÚBLICA Faço saber que o Congresso Nacional decreta e eu sanciono a seguinte Lei:" também são preâmbulo.
+PREAMBLE = re.compile(r"^(?:CONSIDERANDO\b|(?:O|A|OS|AS)\s+.{3,600}?\b(?:NO USO|NO DESEMPENHO|NO EXERC[IÍ]CIO|USANDO|FAZ SABER"
+                      r"|COM FUNDAMENTO|ESTATUI|FA[CÇ]O SABER|EU SANCIONO)\b)", re.I)
 # Também com letras espaçadas, comum no DOE: "R E S O L V E:" (Portaria nº 2005/2026-SEASTER e outras).
 COMMAND = re.compile(r"^(?:D\s?E\s?C\s?R\s?E\s?T\s?A(?:\s?M)?|R\s?E\s?S\s?O\s?L\s?V\s?E(?:\s?M)?|D\s?E\s?L\s?I\s?B\s?E\s?R\s?A(?:\s?M)?"
                      r"|PROMULGAM?|FAZ SABER|FAZEM SABER)\s*[:.;]?$", re.I)
@@ -86,7 +94,7 @@ INLINE_COMMAND_END = re.compile(r"\b(?:RESOLVEM?|DECRETAM?|DELIBERAM?|DETERMINAM
 PREAMBLE_AUTHORITY = re.compile(r"^((?:O|A|OS|AS)\s+.+?)(?=,?\s+(?:no uso|no desempenho|no exercício|usando)\b|;\s*$)", re.I)
 # "O Secretário de Estado da Fazenda, considerando o disposto ..., resolve:" (Portaria nº 659/2026-SEFA, DOE de
 # 09.10.2026): a autoridade também leva negrito; só com cargo de autoridade e sem vírgula antes de "considerando".
-AUTHORITY_CONSIDERING = re.compile(r"^((?:O|A|OS|AS)\s+[^,;]+?)(?=,\s+considerando\b)", re.I)
+AUTHORITY_CONSIDERING = re.compile(r"^((?:O|A|OS|AS)\s+[^,;]+?)(?=,\s+(?:considerando|nos termos)\b)", re.I)
 EDITORIAL_NEW = re.compile(r"^(?:REDA[CÇ][AÃ]O\s+DADA|ACRESCID[OA]|VIDE\s+(?:CONVALIDA[CÇ][AÃ]O|SOLU[CÇ][AÃ]O))\b", re.I)
 EDITORIAL_OLD = re.compile(r"^(?:REDA[CÇ][AÃ]O\s+ORIGINAL|REDA[CÇ][AÃ]O\s+ANTERIOR|REVOGAD[OA])\b", re.I)
 WEB_NOISE = re.compile(
@@ -94,12 +102,15 @@ WEB_NOISE = re.compile(
     r"ESTE\s+CONTE[UÚ]DO\s+N[AÃ]O\s+SUBSTITUI|DI[AÁ]RIO\s+OFICIAL\s+(?:DA|DO)\b)", re.I
 )
 LEGAL_QUOTE = re.compile(r'^[“"]\s*(?:ART\.?\s*\d|§\s*\d|PAR[AÁ]GRAFO\b|[IVXLCDM]+\s*[-–]|[a-z]\s*\)|\.{3,})', re.I)
-QUOTE_END = re.compile(r'[”"]\s*(?:\(NR\))?\s*[.;]?$' , re.I)
+# Fim da citação: '..." (NR)', '..." (AC)' (dispositivo acrescido) e '..." (N.R.)' (3.24: com "(AC)", o resto do ato
+# saía todo como redação nova). CHANGE_MARK: a marca que caiu sozinha na linha de baixo.
+QUOTE_END = re.compile(r'[”"]\s*(?:\(\s*(?:N\.?\s?R|A\.?\s?C)\.?\s*\)\s*)?[.;]?$', re.I)
+CHANGE_MARK = re.compile(r"^\(\s*(?:N\.?\s?R|A\.?\s?C)\.?\s*\)\s*[.;]?$", re.I)
 # Cargos de quem assina. CARGO (acima) também abre parágrafo em qualquer ponto do PDF; esta
 # lista mais ampla só vale perto de um nome (assinatura), porque "Procurador do Estado",
 # "Delegado de Polícia" etc. podem começar uma linha no meio de um artigo.
 SIGNER_CARGO = re.compile(
-    r"^(?:VICE[-\s])?(?:GOVERNADOR(?:A)?|(?:SUB)?SECRET[AÁ]RI[OA]|PRESIDENTE|MINISTR[OA]|DIRETOR(?:A)?|"
+    r"^(?:\d{1,2}\s*[º°ªa]\s*)?(?:VICE[-\s])?(?:GOVERNADOR(?:A)?|(?:SUB)?SECRET[AÁ]RI[OA]|PRESIDENTE|MINISTR[OA]|DIRETOR(?:A)?|"
     r"PROCURADOR(?:A)?|DELEGAD[OA]|DEFENSOR(?:A)?|CONTROLADOR(?:A)?|CORREGEDOR(?:A)?|COORDENADOR(?:A)?|"
     r"CHEFE|COMANDANTE|SUPERINTENDENTE|PREFEIT[OA]|OUVIDOR(?:A)?|PROMOTOR(?:A)?|CONSELHEIR[OA]|"
     r"AUDITOR(?:A)?|REITOR(?:A)?)\b", re.I)
@@ -124,6 +135,8 @@ EMENTA_START = re.compile(r"^(?:ABRE|ALTERA|DISP[OÕ]E|INSTITUI|REGULAMENTA|ESTA
 # têm títulos como "DA CONSULTA", "DA LEGISLAÇÃO APLICÁVEL", "DA MANIFESTAÇÃO", "DA CONCLUSÃO".
 OPINION_EPIGRAPH = re.compile(r"^SOLU[CÇ][AÃ]O\s+DE\s+CONSULTA\b", re.I)
 OPINION_SECTION = re.compile(r"^(?:DA|DO|DAS|DOS)\s+[A-ZÀ-Ý][A-ZÀ-Ý ,-]{2,70}$")
+# Emenda Constitucional (3.21): "Mesa da Câmara dos Deputados" / "Mesa do Senado Federal" sobre as assinaturas.
+SIGNATURE_GROUP = re.compile(r"^Mesa\s+d[ao]s?\s+(?:C[âa]mara|Senado|Congresso|Assembleia)\b[^.;:]{0,60}$", re.I)
 
 
 @dataclass
@@ -178,7 +191,7 @@ def looks_uppercase(text: str) -> bool:
 AUTHORITY_START = re.compile(
     r"^(?:O|A|OS|AS)\s+(?:VICE[-\s])?(?:GOVERNADOR|(?:SUB)?SECRET[AÁ]RI|PROCURADOR|PRESIDENTE|DIRETOR|DELEGAD|"
     r"DEFENSOR|CONTROLADOR|CORREGEDOR|COMANDANTE|SUPERINTENDENTE|PREFEIT|MINISTR|COORDENADOR|CHEFE|AUDITOR|"
-    r"OUVIDOR|PROMOTOR|CONSELHEIR)", re.I)
+    r"OUVIDOR|PROMOTOR|CONSELHEIR|MESAS?\b)", re.I)          # "As Mesas da Câmara ... e do Senado Federal" (EC)
 
 
 def is_preamble(text: str) -> bool:
@@ -241,7 +254,21 @@ def keep_line_hyphen(left: str, right: str, vocab: Counter | None = None) -> boo
         return True                                            # anti-inflamatório, micro-ondas
     if first[:1].isupper() and not (left.isupper() and first.isupper()):
         return True                                            # Delegado-Geral, Econômico-Fiscais
+    if compound_adjective(low_left, first):
+        return True                                            # econômico-financeiro, técnico-científico
     return False
+
+
+# Adjetivo composto partido no hífen (EC 141, DOU de 16.10.2026: "equilíbrio econômico-" / "financeiro" saía
+# "econômicofinanceiro"): a primeira parte é um adjetivo inteiro em -ico/-ica e a segunda, outro adjetivo em
+# minúsculas. "economica-" / "mente" continua sendo separação silábica.
+COMPOUND_SECOND = ("eiro", "eira", "eiros", "eiras", "ivo", "iva", "ivos", "ivas", "ico", "ica", "icos", "icas",
+                   "al", "ais", "ar", "ares", "ário", "ária", "ários", "árias")
+
+
+def compound_adjective(low_left: str, first: str) -> bool:
+    return (len(low_left) >= 6 and low_left.endswith(("ico", "ica")) and first == first.lower()
+            and len(first) >= 6 and not first.startswith("ment") and first.endswith(COMPOUND_SECOND))
 
 
 def join_line(previous: str, line: str, vocab: Counter | None = None) -> str:
@@ -337,6 +364,11 @@ def logical_blocks(source: str, join_soft_wraps: bool = False) -> list[Block]:
         if not line:
             blank = True
             continue
+        if blocks and CHANGE_MARK.match(line) and re.search(r'[”"]\s*$', blocks[-1].text):
+            blocks[-1].text = blocks[-1].text.rstrip() + " " + line      # '... prévio.”' + '(NR)'
+            blocks[-1].last_line = line_number
+            blank = False
+            continue
         if join_soft_wraps and blocks and not blank and (
             (re.match(r"^[a-zà-ÿ]", line)
              and not re.search(r'[.!?:;”"]\s*$', blocks[-1].text)
@@ -351,13 +383,15 @@ def logical_blocks(source: str, join_soft_wraps: bool = False) -> list[Block]:
     return blocks
 
 
-def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
+def classify(source: str, join_soft_wraps: bool = False, state: dict | None = None) -> list[Item]:
+    """state (3.24): guarda entre as regiões de um mesmo ato (colunas e páginas do diário) se uma citação
+    ainda está aberta. Sem isso, os §§ 4º e 5º depois de uma quebra de coluna saíam como texto comum."""
     blocks = logical_blocks(source, join_soft_wraps)
     items: list[Item] = []
     front = True
     found_epigraph = False
     seen_preamble = False
-    in_quote = False
+    in_quote = bool(state and state.get("in_quote"))
     last_heading = False
     after_palace = False
     last_was_name = False
@@ -411,6 +445,8 @@ def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
             front = False
         elif last_heading and looks_uppercase(t) and not ARTICLE.match(t) and not t.endswith(('.', ';', ':')):
             role, reason = "titulo", "Nome da divisão logo após o título"
+        elif SIGNATURE_GROUP.match(t):        # vale também no início de uma coluna ("publicação." / "Brasília, ...")
+            role, reason = "texto", "Mesa que assina (Emenda Constitucional)"
         elif (looks_like_person_name(t) and not front
               and (after_palace or (block_index + 1 < len(blocks)
                                    and SIGNER_CARGO.match(blocks[block_index + 1].text)))):
@@ -484,10 +520,14 @@ def classify(source: str, join_soft_wraps: bool = False) -> list[Item]:
         last_was_name = role == "autoridade"
         after_palace = bool(re.match(r"^(?:PAL[AÁ]CIO|GABINETE)\b", u)
                             or re.match(r"^[^,;:]+,\s*\d{1,2}\s+de\s+\w+\s+de\s+\d{4}[.]?$", t, re.I)) or last_was_name
+        if reason == "Mesa que assina (Emenda Constitucional)":
+            after_palace = True
         if role == "cargo":
             after_palace = False
 
-    if in_quote and items:
+    if state is not None:
+        state["in_quote"] = in_quote
+    elif in_quote and items:
         items[-1].attention.append("Aspas de redação nova não foram fechadas no texto fornecido.")
     return items
 
@@ -654,7 +694,7 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("Formatador SEFA 3.20 — textos copiados")
+            self.root.title("Formatador SEFA 3.24 — textos copiados")
             self.root.geometry("1080x780")
             self.root.minsize(760, 550)
             self.model_var = tk.StringVar(value=str(DEFAULT_MODEL))

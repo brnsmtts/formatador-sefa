@@ -31,7 +31,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Emu, Inches, Pt
 
 from formatador_sefa import (
-    ANNEX, ARTICLE, CARGO, COMMAND, EMENTA_START, ENDS_WITH_ABBREVIATION, EPIGRAPH, HEADING, NAME, PREAMBLE,
+    ANNEX, ARTICLE, CARGO, CHANGE_MARK, COMMAND, EMENTA_START, ENDS_WITH_ABBREVIATION, EPIGRAPH, HEADING, NAME, NUMBER_SIGN, PREAMBLE,
     SIGNER_CARGO, Item, continues_epigraph, join_line, looks_like_signer_name, looks_uppercase, vocabulary,
     add_formatted_paragraph, apply_styles, classify, clear_model_contents,
     ementa_spacer_before, looks_like_person_name, paragraph_style_names,
@@ -118,6 +118,8 @@ class Extraction:
     limits_reviewed: bool = False
     protocol: str = ""
     intertable_segments_checked: int = 0
+    # Citação aberta no fim de uma coluna ou página continua na região seguinte (3.24).
+    quote_state: dict = field(default_factory=dict)
 
     @property
     def tables(self) -> list[TableBlock]:
@@ -455,6 +457,73 @@ def font_turn(previous: dict, line: dict) -> bool:
     return (before == {1} and after == {0}) or (before == {0} and after == {1})
 
 
+def side_by_side_signatures(lines: list[dict]) -> list[dict]:
+    """Assinaturas em duas colunas lado a lado, depois da linha de local e data (Emenda Constitucional nº 140,
+    DOU de 16.10.2026: "Mesa da Câmara dos Deputados" | "Mesa do Senado Federal", "Deputado Hugo Motta" |
+    "Senador Davi Alcolumbre", "Presidente" | "Presidente" ...). Lidas linha a linha, as duas colunas se
+    misturavam. Devolve a coluna da esquerda inteira e depois a da direita, cada linha marcada para ser um
+    parágrafo próprio; sem esse arranjo, devolve as linhas na ordem de sempre."""
+    ordered = sorted(lines, key=lambda l: (l["top"], l["x0"]))
+    place = max((i for i, l in enumerate(ordered) if PLACE_DATE.match(l["text"].strip())), default=None)
+    if place is None or len(ordered) - place - 1 < 4:
+        return ordered
+    tail = ordered[place + 1:]
+    middle = (min(l["x0"] for l in tail) + max(l["x1"] for l in tail)) / 2
+    left = [l for l in tail if l["x1"] <= middle + 2]
+    right = [l for l in tail if l["x0"] >= middle - 2]
+    if len(left) + len(right) != len(tail) or len(left) < 2 or len(right) < 2:
+        return ordered
+    paired = sum(1 for l in right if any(abs(l["top"] - other["top"]) < 1.5 for other in left))
+    if paired < .6 * len(right):
+        return ordered
+    return ordered[:place + 1] + [dict(l, standalone=True) for l in sorted(left, key=lambda l: l["top"])
+                                  + sorted(right, key=lambda l: l["top"])]
+
+
+def merge_split_line(lines: list[dict]) -> list[dict]:
+    """O PDF do DOU parte as linhas muito espaçadas pela justificação em pedaços na mesma altura ("agentes;" |
+    "e" | "dá" | "outras"; "Art. 11." | "A União fornecerá ..."). Os pedaços voltam a ser uma linha; antes, o
+    pedaço terminado em ";" ou "." fechava o parágrafo no meio da linha. Não junta células de tabela não
+    reconhecida: pedaços alinhados em coluna com os da linha de cima ou de baixo ficam como estão."""
+    rows: list[list[dict]] = []
+    for line in lines:
+        if rows and abs(line["top"] - rows[-1][-1]["top"]) < 1 and not line.get("standalone"):
+            rows[-1].append(line)
+        else:
+            rows.append([line])
+    starts = [[l["x0"] for l in row[1:]] for row in rows]
+
+    def columnar(index: int) -> bool:
+        for other in (index - 1, index + 1):
+            if 0 <= other < len(rows) and abs(rows[other][0]["top"] - rows[index][0]["top"]) < 20:
+                if sum(any(abs(x - y) < 2 for y in starts[other]) for x in starts[index]) >= 2:
+                    return True
+        return False
+
+    tabular = {id(line) for index, row in enumerate(rows) if len(row) > 1 and columnar(index) for line in row}
+    result: list[dict] = []
+    for line in lines:
+        previous = result[-1] if result else None
+        if (previous and not previous.get("standalone") and not line.get("standalone") and id(line) not in tabular
+                and abs(line["top"] - previous["top"]) < 1 and 0 <= line["x0"] - previous["x1"] < 40
+                # dois textos longos lado a lado são colunas paralelas (duas portarias na mesma altura, DOE de
+                # 09.10.2026, p. 147), não pedaços de uma linha justificada ("Art. 11." | "A União ...")
+                and min(len(previous["text"]), len(line["text"])) < 25):
+            merged = dict(previous, text=previous["text"] + " " + line["text"], x1=line["x1"],
+                          bottom=max(previous["bottom"], line["bottom"]))
+            if "spans" in previous or "spans" in line:
+                merged["spans"] = (previous.get("spans") or [(previous["text"], 0)]) + [(" ", 0)] + (
+                    line.get("spans") or [(line["text"], 0)])
+            result[-1] = merged
+        else:
+            result.append(line)
+    return result
+
+
+# Texto alterado entre aspas: '"Art. 198. ......' depois de '.........." (NR)' abre parágrafo.
+QUOTED_LABEL = re.compile(r'^[“"]\s*(?:Art\.|ART\.|§|[IVXLCDM]+\s*[-–]|[a-z]\s*\)|\.{3,})')
+
+
 def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dict]] | None = None) -> list[str]:
     """Une somente quebras físicas curtas dentro do mesmo parágrafo. Com opinion (Solução de Consulta),
     a troca de negrito também separa parágrafos e "?" fecha a frase ("... distinta?" / "Resposta. ...").
@@ -463,7 +532,7 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
     members: list[list[dict]] = []
     endings = ('.', ':', ';', '?', '!') if opinion else ('.', ':', ';')
     previous_bottom = 0.0
-    for line in sorted(lines, key=lambda l: (l["top"], l["x0"])):
+    for line in merge_split_line(side_by_side_signatures(lines)):
         text = line["text"].strip()
         if not text:
             continue
@@ -488,6 +557,8 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
             new_start = True
         if ITEM_NUMBER.match(text):
             new_start = True
+        if QUOTED_LABEL.match(text) or (paragraphs and re.search(r"\((?:NR|AC)\)\s*[.;]?\s*$", paragraphs[-1])):
+            new_start = True      # '"Art. 198. ...' / depois de '..." (NR)' ou '..." (AC)'
         if opinion and members and (font_turn(members[-1][-1], line) or OMISSION.fullmatch(text)
                                     or OMISSION.fullmatch(members[-1][-1]["text"].strip())):
             new_start = True      # "[...]" das transcrições fica em parágrafo próprio
@@ -510,6 +581,19 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
         if (paragraphs and re.search(r"\b(?:desta|deste)\s*$", paragraphs[-1], re.I)
                 and re.fullmatch(r"(?:LEI|DECRETO|PORTARIA|RESOLUÇÃO)\.", text, re.I)):
             new_start = False
+        if line.get("standalone"):
+            new_start = True      # assinaturas lado a lado: cada linha é um parágrafo
+        if paragraphs and CHANGE_MARK.match(text) and re.search(r'[”"]\s*$', paragraphs[-1]) and not line.get("standalone"):
+            paragraphs[-1] = paragraphs[-1].rstrip() + " " + text   # '... agendamento prévio.”' / "(NR)" (3.24)
+            members[-1].append(line)
+            previous_bottom = line["bottom"]
+            continue
+        if (paragraphs and re.fullmatch(r"(?:e|ou|e/ou)", text) and paragraphs[-1].rstrip().endswith(";")
+                and not line.get("standalone")):
+            paragraphs[-1] += " " + text          # "... atividade profissional;" / "e" (inciso III)
+            members[-1].append(line)
+            previous_bottom = line["bottom"]
+            continue
         too_far = bool(paragraphs and line["top"] - previous_bottom > 6)
         if (paragraphs and not new_start and not too_far
                 and paragraphs[-1].endswith("\xad")
@@ -547,7 +631,8 @@ def publication_note(pdf_path: Path, epigraph: str, source_name: str | None,
     if not source_name or (not found and not issue_date):
         return None
     year, month, day = found.groups() if found else issue_date
-    feminine = normalized(epigraph).startswith(("PORTARIA", "RESOLUCAO", "INSTRUCAO", "LEI", "SOLUCAO", "MEDIDA"))
+    feminine = normalized(epigraph).startswith(("PORTARIA", "RESOLUCAO", "INSTRUCAO", "LEI", "SOLUCAO", "MEDIDA",
+                                                "EMENDA"))
     extra = " Ed. Extra." if extra_edition or "EXTRA" in pdf_path.name.upper() else ""
     date = f"{day}.{month}.{year[-2:]}" + ("." if extra else "")   # "de 02.10.26. Ed. Extra." (todos os diários)
     return f"{'Publicada' if feminine else 'Publicado'} no {source_name} de {date}{extra or '.'}"
@@ -716,7 +801,8 @@ def block_runs(block: ParagraphBlock) -> list[tuple[str, int]] | None:
 
 
 def normative_blocks(lines: list[dict], page: int, publication: str | None = None,
-                     opinion: bool = False, first_region: bool = False) -> list[ParagraphBlock]:
+                     opinion: bool = False, first_region: bool = False,
+                     state: dict | None = None) -> list[ParagraphBlock]:
     if opinion:
         groups: list[list[dict]] = []
         texts = reflow_lines(lines, True, groups)
@@ -724,7 +810,7 @@ def normative_blocks(lines: list[dict], page: int, publication: str | None = Non
     texts = reflow_lines(lines)
     if publication and texts:
         texts.insert(1, publication)
-    items = classify("\n".join(texts))
+    items = classify("\n".join(texts), state=state)
     blocks = []
     for index, item in enumerate(items):
         if publication and item.text == publication:
@@ -862,7 +948,8 @@ def find_text_tables(page: Any, start_y: float, stop_y: float, grid_tables: list
     """Tenta uma segunda estratégia apenas em grupos tabulares reconhecíveis."""
     if stop_y - start_y < 35:
         return []
-    region = page.crop((0, max(0, start_y), page.width, min(page.height, stop_y)))
+    x0, top, x1, bottom = page.bbox            # no DOU a página pode não começar exatamente em zero
+    region = page.crop((x0, max(top, start_y), x1, min(bottom, stop_y)))
     settings = {"vertical_strategy": "text", "horizontal_strategy": "text",
                 "min_words_vertical": 2, "min_words_horizontal": 1}
     result = []
@@ -950,7 +1037,8 @@ def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines:
             "Use o PDF original para reconstruir este anexo antes de exportar.")
     if not tables:
         region = [line for line in text_lines if start_y <= line["top"] < stop_y]
-        extraction.blocks.extend(normative_blocks(region, page_number, publication, opinion, first_region))
+        extraction.blocks.extend(normative_blocks(region, page_number, publication, opinion, first_region,
+                                                  extraction.quote_state))
         return
     outside_lines = [line for line in text_lines if start_y <= line["top"] < stop_y
                      and not any(line_inside_table(line, table) for table in tables)]
@@ -966,7 +1054,8 @@ def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines:
     if title:          # "QUOTA PARTE DO IPI – Período de 01 a 30.09.2026" (Portaria nº 659/2026-SEFA)
         normative_end = min(normative_end, title[0]["top"] - .1)
         before = [line for line in all_lines if line["top"] + 2 < normative_end]
-    extraction.blocks.extend(normative_blocks(before, page_number, publication, opinion, first_region))
+    extraction.blocks.extend(normative_blocks(before, page_number, publication, opinion, first_region,
+                                              extraction.quote_state))
     logo = logo_block(page, normative_end - 2, first_top, page_number)
     if logo:
         extraction.blocks.append(logo)
@@ -1028,7 +1117,8 @@ _ACT_TYPES = (("INSTRUCAO NORMATIVA", ("INSTRUCAO NORMATIVA", "IN")), ("LEI COMP
               ("AJUSTE", ("AJUSTE",)), ("PROTOCOLO", ("PROTOCOLO",)),
               ("ATO TECNICO", ("ATO TECNICO",)), ("ATO DECLARATORIO", ("ATO DECLARATORIO", "ADE")),
               ("MEDIDA PROVISORIA", ("MEDIDA PROVISORIA", "MP")), ("DESPACHO", ("DESPACHO",)),
-              ("SOLUCAO DE CONSULTA", ("SOLUCAO DE CONSULTA",)))
+              ("SOLUCAO DE CONSULTA", ("SOLUCAO DE CONSULTA",)),
+              ("EMENDA CONSTITUCIONAL", ("EMENDA CONSTITUCIONAL", "EC")))
 
 
 def _act_parts(text: str, epigraph: bool) -> tuple[str | None, str | None, str | None]:
@@ -1040,7 +1130,7 @@ def _act_parts(text: str, epigraph: bool) -> tuple[str | None, str | None, str |
                for word in spellings):
             kind = name
             break
-    found = (re.search(r"\bN\s*[O.]?\s*(\d[\d.]*)", key) if epigraph else None) or re.search(r"(\d[\d.]*)", key)
+    found = (re.search(r"\bN\s*(?:O\.?|\.\s*O?)?\s*(\d[\d.]*)", key) if epigraph else None) or re.search(r"(\d[\d.]*)", key)
     if not found:
         return kind, None, None
     number = found.group(1).replace(".", "").lstrip("0") or "0"
@@ -1080,6 +1170,31 @@ def _query_hit(query: str, epigraph: str) -> bool:
 
 
 CGIBS_SITE = re.compile(r"S[IÍ]TIO ELETR[OÔ]NICO DO (?:COMIT[EÊ] GESTOR DO IMPOSTO SOBRE BENS E SERVI[CÇ]OS|CGIBS)", re.I)
+
+
+EC_WITHOUT_DATE = re.compile(r"^EMENDA\s+CONSTITUCIONAL\s+" + NUMBER_SIGN + r"\s*[\d.]+\s*$", re.I)
+PLACE_DATE_PARTS = re.compile(r"^[^,;:]+,\s*(\d{1,2})[º°]?\s+de\s+([a-zç]+)\s+de\s+(\d{4})\.?$", re.I)
+
+
+def date_constitutional_amendment(extraction: Extraction) -> None:
+    """No DOU, a Emenda Constitucional vem só com o número ("EMENDA CONSTITUCIONAL Nº 140"); a data está no
+    fim ("Brasília, 16 de outubro de 2026."). A epígrafe recebe a data, como na forma oficial de citação
+    ("EMENDA CONSTITUCIONAL Nº 140, DE 16 DE OUTUBRO DE 2026"), com aviso para conferir."""
+    paragraphs = extraction.paragraphs
+    if not paragraphs or paragraphs[0].role != "epigrafe" or not EC_WITHOUT_DATE.match(paragraphs[0].text):
+        return
+    place = next((PLACE_DATE_PARTS.match(b.text.strip()) for b in paragraphs[1:] if PLACE_DATE_PARTS.match(b.text.strip())), None)
+    if not place:
+        return
+    day, month, year = place.groups()
+    epigraph = paragraphs[0]
+    epigraph.text = f"{epigraph.text.strip()}, DE {int(day)} DE {month.upper()} DE {year}"
+    note = (f"Data acrescentada à epígrafe a partir de “{place.group(0).strip()}”, como na forma oficial de citação; "
+            "confira.")
+    epigraph.attention.append(note)
+    if epigraph.item:
+        epigraph.item.text = epigraph.text
+        epigraph.item.attention.append(note)
 
 
 def add_cgibs_availability(extraction: Extraction) -> None:
@@ -1126,22 +1241,24 @@ def _heading_like(text: str) -> bool:
     return bool(text) and len(text) <= 120 and not text.endswith((".", ";", ":", ",")) and text[:1].isupper()
 
 
-def trim_trailing_headings(extraction: Extraction) -> None:
+def trim_trailing_headings(extraction: Extraction, dou: bool = True) -> None:
     """DOU: entre o fim de um ato e a epígrafe do seguinte vêm os títulos do órgão ("Ministério da
     Fazenda", "SECRETARIA EXECUTIVA"). São descartados só quando vêm logo após uma assinatura
     reconhecida ou ao fim de um ANEXO que segue a assinatura; uma assinatura não reconhecida
-    (nome e cargo como texto) nunca é apagada."""
+    (nome e cargo como texto) nunca é apagada.
+    DOE e DO-e/SEFA (3.24, dou=False): só o título de seção em maiúsculas logo depois do cargo de quem
+    assina ("ASSEMBLEIA LEGISLATIVA - LEIS SANCIONADAS", antes da epígrafe da lei seguinte)."""
     blocks = extraction.blocks
     start = len(blocks)
     while (start > 1 and isinstance(blocks[start - 1], ParagraphBlock) and blocks[start - 1].role == "texto"
-           and _heading_like(blocks[start - 1].text)):
+           and _heading_like(blocks[start - 1].text) and (dou or looks_uppercase(blocks[start - 1].text))):
         start -= 1
     if start == len(blocks):
         return
     before = blocks[start - 1]
     roles = [b.role if isinstance(b, ParagraphBlock) else "tabela" for b in blocks[:start]]
     after_signature = isinstance(before, ParagraphBlock) and before.role == "cargo"
-    annex_after_signature = ("cargo" in roles and "anexo" in roles[len(roles) - 1 - roles[::-1].index("cargo"):]
+    annex_after_signature = dou and ("cargo" in roles and "anexo" in roles[len(roles) - 1 - roles[::-1].index("cargo"):]
                              and (not isinstance(before, ParagraphBlock)
                                   or before.text.rstrip().endswith((".", ";", ":"))))
     if after_signature or annex_after_signature:
@@ -1149,6 +1266,52 @@ def trim_trailing_headings(extraction: Extraction) -> None:
         del blocks[start:]
         extraction.issues.append("Títulos de órgão após o fim do ato foram deixados de fora ("
                                  + "; ".join(b.text for b in tail)[:120] + "); confira.")
+
+
+HOUSE_AD_TEXT = re.compile(r"in\.gov\.br|imprensa\s+nacional", re.I)
+
+
+def _image_coverage(page: Any, bbox: tuple[float, float, float, float]) -> float:
+    """Fração da caixa coberta por imagens da página (limitada a 1)."""
+    x0, top, x1, bottom = bbox
+    area = max((x1 - x0) * (bottom - top), 1.0)
+    covered = 0.0
+    for image in getattr(page, "images", []):
+        width = min(x1, image["x1"]) - max(x0, image["x0"])
+        height = min(bottom, image["bottom"]) - max(top, image["top"])
+        if width > 0 and height > 0:
+            covered += width * height
+    return min(covered / area, 1.0)
+
+
+def drop_dou_house_ads(extraction: Extraction, pdf: Any) -> None:
+    """DOU: quadros de divulgação da Imprensa Nacional ("Biblioteca Machado de Assis", "Baixe o app do DOU")
+    ocupam o espaço que sobra depois do último ato da página e eram lidos como tabela do ato, o que impedia
+    a gravação (EC 141, DOU de 16.10.2026). São descartados só quando vêm depois de uma assinatura
+    reconhecida, sem ANEXO, e o quadro é sobretudo imagem ou traz o endereço in.gov.br / "Imprensa
+    Nacional". Uma tabela comum depois da assinatura continua no ato."""
+    blocks = extraction.blocks
+    last_cargo = max((i for i, b in enumerate(blocks) if isinstance(b, ParagraphBlock) and b.role == "cargo"),
+                     default=None)
+    if last_cargo is None or last_cargo == len(blocks) - 1:
+        return
+    tail = blocks[last_cargo + 1:]
+    if not all(isinstance(b, (TableBlock, ImageBlock)) for b in tail):
+        return
+    tables = [b for b in tail if isinstance(b, TableBlock)]
+    if not tables:
+        return
+    for table in tables:
+        text = " ".join(cell for row in table.matrix for cell in row)
+        covered = max(_image_coverage(pdf.pages[part.page - 1], part.bbox) for part in table_page_parts(table))
+        if not (covered >= .3 or HOUSE_AD_TEXT.search(text)):
+            return
+    sample = " ".join(" ".join(cell for row in tables[0].matrix for cell in row).split())[:70]
+    del blocks[last_cargo + 1:]
+    pages = sorted({t.page for t in tables})
+    extraction.issues.append(
+        f"Quadro de divulgação do DOU depois das assinaturas (p. {', '.join(map(str, pages))}: “{sample}…”) "
+        "foi deixado de fora; confira.")
 
 
 def epigraph_text(lines: list[dict], index: int) -> str:
@@ -1336,7 +1499,7 @@ def not_found_message(pdf_path: Path, document: Any, query: str) -> str:
             text = line["text"].strip()
             words = text.split()
             if (len(text) <= 160 and words and words[0].isupper() and len(words[0]) > 2
-                    and re.search(r"\bN[º°O.]?\s*\d", text, re.I) and _query_hit(query, text)):
+                    and re.search(r"\b" + NUMBER_SIGN + r"\s*\d", text, re.I) and _query_hit(query, text)):
                 return (f"O identificador aparece na página {page_number}, no título “{text}”, mas esse tipo de ato "
                         "ainda não é reconhecido pelo programa. Envie o PDF para ajuste.")
     return general
@@ -1554,6 +1717,9 @@ def extract_act(pdf_path: Path, query: str, max_pages: int = 12, occurrence: int
                         if previous.item:
                             previous.item.text = previous.text
                         del extraction.blocks[start_block]
+                if dou:
+                    # O quadro de divulgação depois da assinatura não pode impedir que o ato termine ali.
+                    drop_dou_house_ads(extraction, pdf)
                 last_block = extraction.blocks[-1] if extraction.blocks else None
                 signed_off = isinstance(last_block, ParagraphBlock) and last_block.role == "cargo"
                 if found_end:
@@ -1591,10 +1757,16 @@ def extract_act(pdf_path: Path, query: str, max_pages: int = 12, occurrence: int
         merge_across_regions(extraction)
         merge_annex_subtitles(extraction)
         link_split_signatures(extraction)
-        if source_name == "DOU" and ended_by_next:
-            trim_trailing_headings(extraction)
+        if ended_by_next:
+            trim_trailing_headings(extraction, source_name == "DOU")
+        if extraction.quote_state.get("in_quote"):
+            last = next((b for b in reversed(extraction.blocks)
+                         if isinstance(b, ParagraphBlock) and b.role == "redacao_nova"), None)
+            if last is not None:
+                last.attention.append("Aspas de redação nova não foram fechadas no texto fornecido.")
         if source_name == "DOU":
             add_cgibs_availability(extraction)
+        date_constitutional_amendment(extraction)
         return extraction
 
 
@@ -1825,6 +1997,8 @@ def build_word(extraction: Extraction, model_path: Path, output_path: Path, over
                 p.paragraph_format.keep_with_next = True
             if block.kind == "date":
                 p.paragraph_format.space_before = Pt(7)
+            if block.item.reason == "Mesa que assina (Emenda Constitucional)":
+                p.paragraph_format.keep_with_next = True     # "Mesa da Câmara dos Deputados" junto do 1º nome
         else:
             p = model.add_paragraph()
             p.style = "Normal"

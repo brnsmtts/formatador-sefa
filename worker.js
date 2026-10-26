@@ -4,12 +4,16 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.20-web3";
+const VERSAO = "3.24-web1";
 
 // Módulos do programa desktop (sem alteração) + a ponte com a página
 const ARQUIVOS = [
   "web_ponte.py", "extrator_pdf.py", "importar_pdf.py", "formatador_sefa.py",
   "links_no_word.py", "links_legislacao.py", "modelo_sefa.docx", "tabela_links.tsv",
+  // Consolidador SEFA (aba Aplicar alterações): módulos do programa sem alteração + a ponte
+  "consolidador_ponte.py", "modelos/estilos_sefa.xml",
+  ...["__init__", "editorial", "engine", "index", "io", "model", "notes", "observations", "parser", "refs",
+    "report", "temporal"].map((m) => `consolidador/${m}.py`),
 ];
 
 // Bibliotecas: as primeiras vêm da pasta pyodide/, as .whl da pasta wheels/
@@ -64,21 +68,78 @@ async function iniciar() {
   progresso("Carregando o formatador");
   py.FS.mkdirTree("/formatador");
   for (const nome of ARQUIVOS) {
-    const resposta = await fetch(`${base}py/${nome}?v=${VERSAO}`);
+    // no-cache: o navegador sempre confere com o site se o arquivo mudou (a tabela de links é
+    // trocada com frequência); quando não mudou, usa o que guardou, sem baixar de novo
+    const resposta = await fetch(`${base}py/${nome}?v=${VERSAO}`, { cache: "no-cache" });
     if (!resposta.ok) throw new Error(`não encontrei py/${nome} no site (erro ${resposta.status})`);
+    if (nome.includes("/")) py.FS.mkdirTree(`/formatador/${nome.slice(0, nome.lastIndexOf("/"))}`);
     py.FS.writeFile(`/formatador/${nome}`, new Uint8Array(await resposta.arrayBuffer()));
   }
   py.runPython("import sys; sys.path.insert(0, '/formatador')");
   ponte = py.pyimport("web_ponte");
   py.FS.mkdirTree("/work/saida");
   py.FS.mkdirTree("/work/previa");
-  return JSON.parse(ponte.versao());
+  const info = JSON.parse(ponte.versao());
+  info.consolidador = py.runPython("import consolidador; consolidador.__version__");
+  return info;
+}
+
+// O Consolidador só é importado quando a aba Aplicar alterações é usada
+let consPonte = null;
+function cons() {
+  if (!consPonte) consPonte = py.pyimport("consolidador_ponte");
+  return consPonte;
+}
+
+function limparPasta(pasta) {
+  try {
+    for (const f of py.FS.readdir(pasta)) if (f !== "." && f !== "..") py.FS.unlink(`${pasta}/${f}`);
+  } catch {
+    py.FS.mkdirTree(pasta);
+  }
+}
+
+// Grava a legislação e o ato alterador com os nomes originais (o relatório e o plano mostram esses nomes)
+function gravarEntradasConsolidar({ base, baseNome, alterador, alteradorNome }) {
+  const caminhos = {};
+  for (const [papel, dados, nome] of [["base", base, baseNome], ["alterador", alterador, alteradorNome]]) {
+    if (!dados) continue;
+    const pasta = `/work/consolidar/${papel}`;
+    limparPasta(pasta);
+    caminhos[papel] = `${pasta}/${nomeArquivo(nome, papel === "base" ? "legislacao.docx" : "ato_alterador.docx")}`;
+    py.FS.writeFile(caminhos[papel], new Uint8Array(dados));
+  }
+  return caminhos;
+}
+
+function caminhoAtual(papel) {
+  const pasta = `/work/consolidar/${papel}`;
+  try {
+    const f = py.FS.readdir(pasta).find((x) => x !== "." && x !== "..");
+    return f ? `${pasta}/${f}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function camposConsolidar(d) {
+  return [d.ato || "", d.publicacao || "", d.efeitos || "", d.anoNotas || "auto"];
 }
 
 const pronto = iniciar();
 
 function json(texto) {
   return JSON.parse(texto);
+}
+
+function nomeArquivo(nome, padrao) {
+  const base = String(nome || "").split(/[\\/]/).pop().replace(/[\x00-\x1f]/g, "").trim();
+  return !base || base === "." || base === ".." ? padrao : base;
+}
+
+function nomeSeguro(nome) {
+  const base = nomeArquivo(nome, "entrada.pdf");
+  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
 }
 
 function lerSeExistir(caminho) {
@@ -90,12 +151,60 @@ function lerSeExistir(caminho) {
 }
 
 const acoes = {
+  /* ---- Consolidador (aba Aplicar alterações) ---- */
+  consAnalisar(d) {
+    const c = gravarEntradasConsolidar(d);
+    return json(cons().analisar(c.base, c.alterador, ...camposConsolidar(d)));
+  },
+  consAlternar({ id }) {
+    return json(cons().alternar(id));
+  },
+  consCorrigir({ id, acao, corpo, destino, alcance, efeitos, renumerar, nova }) {
+    return json(cons().corrigir(id, acao, corpo, destino, alcance, efeitos, renumerar, nova));
+  },
+  consAdicionar() {
+    return json(cons().adicionar());
+  },
+  consRemover({ id }) {
+    return json(cons().remover(id));
+  },
+  consAprovar() {
+    return json(cons().aprovar_extracao());
+  },
+  consGerar(d) {
+    const destino = `/work/consolidar/saida/${nomeArquivo(d.nome, "legislacao_CONSOLIDADO.docx")}`;
+    const r = json(cons().gerar(destino, !!d.realcar, ...camposConsolidar(d)));
+    if (r.ok) r.wordBytes = py.FS.readFile(r.word);
+    return r;
+  },
+  consRelatorio(d) {
+    const r = json(cons().relatorio("/work/consolidar/saida/plano.html", ...camposConsolidar(d)));
+    if (r.ok) r.htmlBytes = py.FS.readFile(r.relatorio);
+    return r;
+  },
+  consSalvarPlano(d) {
+    const r = json(cons().salvar_plano("/work/consolidar/saida/Plano_consolidacao.json", ...camposConsolidar(d)));
+    if (r.ok) r.jsonBytes = py.FS.readFile(r.plano);
+    return r;
+  },
+  consAbrirPlano(d) {
+    gravarEntradasConsolidar(d);
+    py.FS.mkdirTree("/work/consolidar/plano");
+    py.FS.writeFile("/work/consolidar/plano/plano.json", new Uint8Array(d.plano));
+    return json(cons().abrir_plano("/work/consolidar/plano/plano.json", caminhoAtual("base"), caminhoAtual("alterador")));
+  },
+
   async versao() {
     return await pronto;
   },
-  analisar({ pdf, consulta, maxPaginas, ocorrencia }) {
-    py.FS.writeFile("/work/entrada.pdf", new Uint8Array(pdf));
-    return json(ponte.analisar("/work/entrada.pdf", consulta, maxPaginas, ocorrencia || 0));
+  analisar({ pdf, nome, consulta, maxPaginas, ocorrencia }) {
+    // o PDF fica com o nome original, como no programa do computador: a data no nome entra na
+    // linha de publicação ("2026.10.14.DOE.pdf"), e "Extra" e "Previsão" no nome geram os avisos
+    const caminho = `/work/pdf/${nomeSeguro(nome)}`;
+    try { py.FS.readdir("/work/pdf").filter((f) => f !== "." && f !== "..").forEach((f) => py.FS.unlink(`/work/pdf/${f}`)); }
+    catch { py.FS.mkdirTree("/work/pdf"); }
+    py.FS.writeFile(caminho, new Uint8Array(pdf));
+    return json(ponte.analisar(caminho, consulta, maxPaginas, ocorrencia || 0));
   },
   estado() {
     return json(ponte.estado());
