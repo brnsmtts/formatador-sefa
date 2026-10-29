@@ -19,6 +19,8 @@ Aberta direto com dois cliques no `index.html`, a página **não funciona**: o n
 
 No plano gratuito, o repositório precisa ser público.
 
+O arquivo vazio `.nojekyll` precisa estar na página inicial do repositório. Sem ele, o GitHub Pages não publica arquivos cujo nome começa com sublinhado, como o `py/consolidador/__init__.py`, e o site mostra "não encontrei py/consolidador/__init__.py no site (erro 404)". Se faltar, crie-o em **Add file > Create new file**, com o nome `.nojekyll` e o conteúdo em branco.
+
 ### Netlify
 
 Entre em https://app.netlify.com/drop e arraste esta pasta inteira. O site é publicado na hora, sem repositório.
@@ -32,7 +34,7 @@ O primeiro acesso baixa cerca de 41 MB (Python e bibliotecas). Nos seguintes, o 
 ## Atualizar para uma nova versão do formatador
 
 1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
-2. Em `worker.js`, aumente o número em `const VERSAO = "3.24-web1";` (por exemplo, para `3.24-web2` ou `3.25-web1`). Assim os navegadores não usam os arquivos antigos guardados.
+2. Em `worker.js`, aumente o número em `const VERSAO = "3.24-web2";` (por exemplo, para `3.24-web3` ou `3.25-web1`). Assim os navegadores não usam os arquivos antigos guardados.
 3. Publique de novo.
 
 Se uma versão nova passar a importar outro módulo, acrescente o nome do arquivo à lista `ARQUIVOS` em `worker.js`.
@@ -44,7 +46,7 @@ O `web_ponte.py` é o único arquivo próprio da web. Ele:
 - faz os links consultarem só a tabela;
 - troca as janelas e diálogos pelo envio e download de arquivos.
 
-## Aba Aplicar alterações (Consolidador SEFA 1.4.2)
+## Aba Aplicar alterações (Consolidador SEFA 1.4.3)
 
 A aba **Aplicar alterações** é o Consolidador SEFA rodando no navegador. Os módulos da pasta `py/consolidador/` e o `py/modelos/estilos_sefa.xml` vêm do programa do computador, sem alteração; a `gui.py` e a `cli.py` ficam de fora, porque a janela é a própria página. O `py/consolidador_ponte.py` refaz para a página o que a janela do programa faz: a seleção das propostas, a validação da correção, a mudança manual, a aprovação da extração de PDF/HTML e a abertura do plano salvo.
 
@@ -61,9 +63,13 @@ Diferenças em relação ao programa do computador:
 - Não há os botões Abrir base no Word, Abrir ato alterador e Abrir resultado: os arquivos estão no seu computador.
 - **Exemplo de uso** carrega os dois Word fictícios da pasta `exemplos/consolidador/`.
 
-Para atualizar o Consolidador numa versão nova, copie os `.py` da pasta `consolidador` do programa (menos `gui.py` e `cli.py`) para `py/consolidador/` e o `modelos/estilos_sefa.xml` para `py/modelos/`, e aumente a `VERSAO` em `worker.js`. Se a versão nova tiver um módulo novo, acrescente o nome dele à lista `ARQUIVOS` em `worker.js`.
+Para atualizar o Consolidador numa versão nova, copie os `.py` da pasta `consolidador` do programa (menos `gui.py` e `cli.py`) para `py/consolidador/` e os arquivos da pasta `modelos` (`estilos_sefa.xml` e `estilos_sefa_atual.xml`) para `py/modelos/`, e aumente a `VERSAO` em `worker.js`. Se a versão nova tiver um módulo novo, acrescente o nome dele à lista `ARQUIVOS` em `worker.js`.
 
 Testes: no Python do computador e no do navegador, o exemplo fictício saiu igual ao `03_Resultado_ESPERADO.docx` do programa, e os casos da LC 123 com a LC 238/26 (com a base em .docx), da Constituição Federal com a EC 136/25 e da Lei 5.530 com a Lei 11.233/25 saíram iguais ao Word do motor do programa chamado direto (21, 9 e 4 propostas, todas prontas). Com o ato alterador em PDF, as 4 propostas ficaram pendentes de conferência e, depois de Aprovar extração, o Word saiu igual ao do ato em Word. No navegador, a Constituição levou cerca de 9 segundos para analisar e 19 para gerar.
+
+## Consolidador 1.4.3 (lista de estilos completa)
+
+O Word gerado na aba Aplicar alterações passou a trazer a lista completa de estilos do modelo SEFA da base, como o Word da aba Formatar ato. Antes, só vinham os estilos que a base já tinha e os poucos usados nas notas (no Exemplo de uso, 4 estilos SEFA). Base no modelo atual (notas em `a30_remiss_nova_red`, como os atos formatados pelo site): os 40 estilos do modelo do Formatador, de `py/modelos/estilos_sefa_atual.xml`. Base no modelo antigo (notas em `a10_nr_remiss`, como a CF, a LC 123 e a Lei 5.530 da SEFA): os 27 estilos do modelo antigo. Os estilos da base não mudam, e o texto do documento é o mesmo da 1.4.2. Arquivos: `py/consolidador/engine.py`, `py/consolidador/__init__.py`, `py/modelos/estilos_sefa_atual.xml` (novo) e `worker.js` (o arquivo novo na lista `ARQUIVOS` e a `VERSAO` 3.24-web2).
 
 ## Versão 3.24 e Consolidador 1.4.2 (exemplos didáticos)
 

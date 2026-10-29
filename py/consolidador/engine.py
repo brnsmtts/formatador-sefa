@@ -397,24 +397,46 @@ def analyze(base_path, amender_path, cache, citation="", publication="", effects
     return plan, base
 
 
-def ensure_styles(doc, profile):
-    source = etree.parse(str(ROOT / "modelos/estilos_sefa.xml")).getroot()
-    by_name = {s.find(qn("w:name")).get(qn("w:val")): s for s in source if s.find(qn("w:name")) is not None}
-    by_id = {s.get(qn("w:styleId")): s for s in source}
+MODEL_STYLE = re.compile(r"a\d\d_")
 
-    def copy_style(s):
+
+def _style_source(name):
+    """Estilos de um modelo: estilos_sefa.xml (modelo antigo, a10_nr_remiss ...) ou estilos_sefa_atual.xml
+    (o mesmo modelo do Formatador SEFA, a30_remiss_nova_red ...)."""
+    root = etree.parse(str(ROOT / "modelos" / name)).getroot()
+    styles = [s for s in root if s.tag == qn("w:style") and s.find(qn("w:name")) is not None]
+    return {s.find(qn("w:name")).get(qn("w:val")): s for s in styles}, {s.get(qn("w:styleId")): s for s in styles}
+
+
+def ensure_styles(doc, profile):
+    """Garante os estilos usados nas notas e no texto e, como no Word do Formatador, a lista completa de estilos
+    do modelo SEFA da base (1.4.3): o atual, se a base usa a30_remiss_nova_red, ou o antigo, se usa a10_nr_remiss.
+    Os estilos que a base já tem não são alterados."""
+    current = profile.get("new_note") == "a30_remiss_nova_red"
+    sources = [_style_source("estilos_sefa_atual.xml"), _style_source("estilos_sefa.xml")]
+    if not current:
+        sources.reverse()
+    ids = {x.get(qn("w:styleId")) for x in doc.styles.element.findall(qn("w:style"))}
+
+    def copy_style(s, by_id):
         sid = s.get(qn("w:styleId"))
-        if any(x.get(qn("w:styleId")) == sid for x in doc.styles.element):
+        if sid in ids:
             return
         parent = s.find(qn("w:basedOn"))
         if parent is not None and parent.get(qn("w:val")) in by_id:
-            copy_style(by_id[parent.get(qn("w:val"))])
+            copy_style(by_id[parent.get(qn("w:val"))], by_id)
         doc.styles.element.append(deepcopy(s))
+        ids.add(sid)
     for name in profile.values():
         if name not in doc.styles:
-            if name not in by_name:
+            source = next((src for src in sources if name in src[0]), None)
+            if source is None:
                 raise ValueError("Estilo não disponível: " + name)
-            copy_style(by_name[name])
+            copy_style(source[0][name], source[1])
+    by_name, by_id = sources[0]
+    for name, s in by_name.items():
+        if MODEL_STYLE.match(name) and name not in doc.styles:
+            copy_style(s, by_id)
 
 
 def paragraph(doc, text, style, bold_label=False):

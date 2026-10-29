@@ -4,14 +4,14 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.24-web1";
+const VERSAO = "3.24-web2";
 
 // Módulos do programa desktop (sem alteração) + a ponte com a página
 const ARQUIVOS = [
   "web_ponte.py", "extrator_pdf.py", "importar_pdf.py", "formatador_sefa.py",
   "links_no_word.py", "links_legislacao.py", "modelo_sefa.docx", "tabela_links.tsv",
   // Consolidador SEFA (aba Aplicar alterações): módulos do programa sem alteração + a ponte
-  "consolidador_ponte.py", "modelos/estilos_sefa.xml",
+  "consolidador_ponte.py", "modelos/estilos_sefa.xml", "modelos/estilos_sefa_atual.xml",
   ...["__init__", "editorial", "engine", "index", "io", "model", "notes", "observations", "parser", "refs",
     "report", "temporal"].map((m) => `consolidador/${m}.py`),
 ];
