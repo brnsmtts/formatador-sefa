@@ -86,7 +86,9 @@ if (location.protocol === "file:") {
   throw new Error("aberto via file://");
 }
 
-const worker = new Worker("worker.js");
+// worker.js sempre da versão publicada: o GitHub Pages deixa o navegador guardar os arquivos por 10 minutos, e um
+// worker.js antigo com os .py novos (que vêm sem cache) não acha os módulos novos ("No module named ...")
+const worker = new Worker(`worker.js?t=${Date.now()}`);
 let seq = 0;
 const pendentes = new Map();
 
@@ -115,7 +117,10 @@ worker.onmessage = ({ data }) => {
     definirMotor("falha", "O formatador não carregou");
     BLOCO_VAZIO.prepend(h("div", { class: "erro-caixa" },
       h("strong", {}, "Não foi possível carregar o formatador"),
-      data.erro + "\nRecarregue a página. Se continuar, a rede pode estar bloqueando arquivos .wasm ou .whl do site."));
+      data.erro + (/No module named|erro 404/.test(data.erro)
+        ? "\nO site foi atualizado há pouco e este navegador ainda guardava arquivos da versão anterior. Feche a aba e " +
+          "abra o site de novo; se continuar, aperte Ctrl+F5 ou abra o site numa janela anônima."
+        : "\nRecarregue a página. Se continuar, a rede pode estar bloqueando arquivos .wasm ou .whl do site.")));
     return;
   }
   const p = pendentes.get(data.id);
