@@ -45,9 +45,10 @@ def note_for_targets(text,targets):
     first=targets[0];level=first.level;plural=len(targets)>1
     if not plural:description=first.description()
     elif all(t.parent()==first.parent() and t.level==level for t in targets):
+        from .refs import enumerate_values
         labels={0:'arts.',1:'§§',2:'incisos',3:'alíneas',4:'itens'}
-        values=[_ordinal(t.parts[level]) if level<2 else t.parts[level] for t in targets]
-        description=labels[level]+' '+_enumerate(values)
+        # “b” e “c”; §§ 3º a 5º; incisos IV e V (como nas notas novas).
+        description=labels[level]+' '+enumerate_values([t.parts[level] for t in targets],level)
         if level>0:description+=' do '+first.parent().description()
     else:return text
     feminine=level==3

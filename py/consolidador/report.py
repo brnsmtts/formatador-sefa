@@ -14,7 +14,7 @@ def report(plan,path,output=""):
     ready=sum(op.status=="pronto" for op in plan.operations)
     applied=sum(op.applied for op in plan.operations)
     pending=sum(op.status=="revisar" for op in plan.operations)
-    actions={"replace":"Substituir", "add":"Acrescentar", "revoke":"Revogar", "rename":"Renumerar"}
+    actions={"replace":"Substituir", "add":"Acrescentar", "revoke":"Revogar", "rename":"Renumerar", "heading":"Título", "annex":"Anexo", "note":"Nota"}
     rows=[]
     for op in plan.operations:
         status="APLICADA" if op.applied else op.status.upper()

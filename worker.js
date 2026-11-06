@@ -4,16 +4,16 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.24-web2";
+const VERSAO = "3.28.1-web2";
 
-// Módulos do programa desktop (sem alteração) + a ponte com a página
+// Módulos do programa do computador (sem alteração) + a ponte com a página
 const ARQUIVOS = [
-  "web_ponte.py", "extrator_pdf.py", "importar_pdf.py", "formatador_sefa.py",
+  "web_ponte.py", "extrator_pdf.py", "importar_pdf.py", "importar_dou.py", "formatador_sefa.py",
   "links_no_word.py", "links_legislacao.py", "modelo_sefa.docx", "tabela_links.tsv",
   // Consolidador SEFA (aba Aplicar alterações): módulos do programa sem alteração + a ponte
   "consolidador_ponte.py", "modelos/estilos_sefa.xml", "modelos/estilos_sefa_atual.xml",
-  ...["__init__", "editorial", "engine", "index", "io", "model", "notes", "observations", "parser", "refs",
-    "report", "temporal"].map((m) => `consolidador/${m}.py`),
+  ...["__init__", "annexes", "editorial", "engine", "headings", "index", "io", "model", "notes", "observations",
+    "parser", "refs", "report", "temporal"].map((m) => `consolidador/${m}.py`),
 ];
 
 // Bibliotecas: as primeiras vêm da pasta pyodide/, as .whl da pasta wheels/
@@ -159,8 +159,10 @@ const acoes = {
   consAlternar({ id }) {
     return json(cons().alternar(id));
   },
-  consCorrigir({ id, acao, corpo, destino, alcance, efeitos, renumerar, nova }) {
-    return json(cons().corrigir(id, acao, corpo, destino, alcance, efeitos, renumerar, nova));
+  consCorrigir({ id, acao, corpo, destino, alcance, efeitos, renumerar, nova, vide }) {
+    // sem notas Vide editadas vai undefined, que chega ao Python como None (null chegaria como JsNull)
+    return json(cons().corrigir(id, acao, corpo, destino, alcance, efeitos, renumerar, nova,
+      typeof vide === "string" ? vide : undefined));
   },
   consAdicionar() {
     return json(cons().adicionar());
@@ -205,6 +207,27 @@ const acoes = {
     catch { py.FS.mkdirTree("/work/pdf"); }
     py.FS.writeFile(caminho, new Uint8Array(pdf));
     return json(ponte.analisar(caminho, consulta, maxPaginas, ocorrencia || 0));
+  },
+  analisarPagina({ pagina, nome, link, figuras, peloLink }) {
+    // a página do ato no DOU: a salva no computador (.mhtml/.html) ou a que o site leu pelo link;
+    // o nome guarda a extensão, que diz ao importador se é arquivo único (.mhtml) ou HTML
+    let arquivo = nomeArquivo(nome, "pagina_dou.html");
+    if (!/\.(mhtml|mht|html?)$/i.test(arquivo)) arquivo += ".html";
+    limparPasta("/work/dou");
+    limparPasta("/work/dou_figuras");
+    const caminho = `/work/dou/${arquivo}`;
+    py.FS.writeFile(caminho, new Uint8Array(pagina));
+    let indice = "";
+    if (figuras && figuras.length) {
+      const lista = figuras.map((f, i) => {
+        const destino = `/work/dou_figuras/f${i}`;
+        py.FS.writeFile(destino, new Uint8Array(f.dados));
+        return { src: f.src, url: f.url, arquivo: destino };
+      });
+      indice = "/work/dou_figuras/indice.json";
+      py.FS.writeFile(indice, JSON.stringify(lista));
+    }
+    return json(ponte.analisar_pagina(caminho, link || "", indice, !!peloLink));
   },
   estado() {
     return json(ponte.estado());

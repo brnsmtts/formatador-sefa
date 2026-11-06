@@ -128,6 +128,8 @@ input[type="number"]:not(.editor-word *) { width: 6.5em; }
 .resultado pre { white-space: pre-wrap; font: 13px/1.45 var(--sans); margin: 8px 0 0; color: var(--grafite); }
 .erro-caixa { margin-top: 12px; padding: 12px 14px; background: var(--vermelho-fundo); border-left: 4px solid var(--vermelho); border-radius: 4px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .erro-caixa strong { display: block; color: var(--vermelho); margin-bottom: 4px; }
+.erro-caixa.aviso { background: #FFF6D6; border-left-color: var(--marca-borda); }
+.erro-caixa.aviso strong { color: var(--tinta); }
 
 .busca-assistida { margin-top: 14px; padding: 14px; background: #FFF8D6; border-left: 4px solid var(--marca-borda); border-radius: 4px; }
 .busca-assistida h3 { margin: 0 0 6px; font-size: 15px; }
@@ -418,6 +420,14 @@ dialog::backdrop { background: rgba(29, 42, 68, .45); }
 .cons-abas { margin-top: 14px; flex-wrap: wrap; }
 .cons-abas .aba { font-size: 13.5px; padding: 7px 12px; }
 .cons-painel { border: 1px solid var(--linha); border-radius: 0 var(--raio) var(--raio) var(--raio); background: #F9FBFD; }
+.origem { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.origem label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--linha);
+  border-radius: 999px; cursor: pointer; font-size: .92rem; background: var(--papel); }
+.origem label:has(input:checked) { border-color: var(--tinta-2); box-shadow: inset 0 0 0 1px var(--tinta-2); font-weight: 700; }
+.origem input { margin: 0; accent-color: var(--tinta-2); }
+.linha-link { display: flex; gap: 6px; margin-bottom: 10px; }
+.linha-link input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #A9B0A6; border-radius: 4px; background: var(--papel); }
+.figura-ato { display: block; max-width: 100%; height: auto; margin: 4px 0; background: #fff; }
 .cons-texto {
   display: block; width: 100%; margin: 0; min-height: 14rem; max-height: 46vh; overflow: auto; padding: 12px 14px;
   font: 15.5px/1.6 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; border: 0; background: transparent;
@@ -455,24 +465,50 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
 <main class="grade" id="modo-formatar" role="tabpanel" aria-labelledby="aba-formatar">
   <div class="passos">
     <section class="passo" aria-labelledby="p1">
-      <h2 id="p1"><span class="n">1</span>PDF do diário oficial</h2>
-      <label class="soltar" id="soltar">
-        <input type="file" id="arquivo-pdf" accept="application/pdf,.pdf">
-        <strong>Arraste o PDF aqui</strong>
-        <span class="dica">ou clique para escolher (DOE, DO-e/SEFA ou DOU)</span>
-      </label>
-      <div class="arquivo" id="arquivo-escolhido" hidden>
-        <span class="nome"><span id="pdf-nome"></span> <span class="tam" id="pdf-tam"></span></span>
-        <button class="ligacao" type="button" id="trocar-pdf">Trocar</button>
+      <h2 id="p1"><span class="n">1</span><span id="p1-titulo">PDF do diário oficial</span></h2>
+      <div class="origem" role="radiogroup" aria-label="Origem do ato">
+        <label><input type="radio" name="origem" value="pdf" checked> PDF do diário</label>
+        <label><input type="radio" name="origem" value="dou"> Página do DOU</label>
+      </div>
+      <div id="origem-pdf">
+        <label class="soltar" id="soltar">
+          <input type="file" id="arquivo-pdf" accept="application/pdf,.pdf">
+          <strong>Arraste o PDF aqui</strong>
+          <span class="dica">ou clique para escolher (DOE, DO-e/SEFA ou DOU)</span>
+        </label>
+        <div class="arquivo" id="arquivo-escolhido" hidden>
+          <span class="nome"><span id="pdf-nome"></span> <span class="tam" id="pdf-tam"></span></span>
+          <button class="ligacao" type="button" id="trocar-pdf">Trocar</button>
+        </div>
+      </div>
+      <div id="origem-dou" hidden>
+        <label class="campo" for="link-dou">Link do ato no DOU</label>
+        <div class="linha-link">
+          <input type="url" id="link-dou" placeholder="https://www.in.gov.br/web/dou/-/..." autocomplete="off">
+          <button class="botao" type="button" id="abrir-dou">Abrir no DOU</button>
+        </div>
+        <label class="soltar" id="soltar-dou">
+          <input type="file" id="arquivo-dou" accept=".mhtml,.mht,.html,.htm">
+          <strong>Arraste aqui a página salva</strong>
+          <span class="dica">ou clique para escolher (.mhtml ou .html)</span>
+        </label>
+        <div class="arquivo" id="dou-escolhido" hidden>
+          <span class="nome"><span id="dou-nome"></span> <span class="tam" id="dou-tam"></span></span>
+          <button class="ligacao" type="button" id="trocar-dou">Trocar</button>
+        </div>
+        <p class="dica">Cole o link e clique em <b>Importar a página do DOU</b>: o site lê a página do ato e baixa as figuras (pelo intermediário público allorigins, porque o DOU não deixa sites lerem a página direto). Se não der certo, abra o ato no DOU, aperte <b>Ctrl+S</b>, salve como <b>“Página da Web, arquivo único”</b> (.mhtml, com as figuras) e arraste o arquivo aqui.</p>
       </div>
     </section>
 
     <section class="passo" aria-labelledby="p2">
-      <h2 id="p2"><span class="n">2</span>Número do ato</h2>
-      <input type="text" id="consulta" placeholder="Ex.: 494/2026-SEFA.GS" autocomplete="off" aria-labelledby="p2">
-      <p class="dica">Um trecho único da epígrafe, como aparece no diário.</p>
-      <label class="campo" for="max-paginas">Máximo de páginas do ato</label>
-      <input type="number" id="max-paginas" min="1" max="100" value="12">
+      <h2 id="p2"><span class="n">2</span><span id="p2-titulo">Número do ato</span></h2>
+      <div id="campos-pdf">
+        <input type="text" id="consulta" placeholder="Ex.: 494/2026-SEFA.GS" autocomplete="off" aria-labelledby="p2">
+        <p class="dica">Um trecho único da epígrafe, como aparece no diário.</p>
+        <label class="campo" for="max-paginas">Máximo de páginas do ato</label>
+        <input type="number" id="max-paginas" min="1" max="100" value="12">
+      </div>
+      <p class="dica" id="dica-dou" hidden>O ato é lido da página do DOU (pelo link ou salva): título, ementa, texto, tabelas e figuras. A linha “Publicada no DOU de ...” sai da data da página.</p>
       <button class="botao principal largo" type="button" id="analisar" disabled>Analisar PDF</button>
       <div id="analisar-erro"></div>
     </section>
@@ -514,8 +550,8 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
   <section class="previa" id="previa" aria-label="Prévia do ato">
     <div class="vazio" id="vazio">
       <h2>A prévia do ato aparece aqui</h2>
-      <p>Escolha o PDF e digite o número do ato. Cada parágrafo aparece com o estilo do modelo na margem; os trechos que o programa pede para conferir ficam marcados em amarelo. Clique em um parágrafo ou célula para corrigir antes de gerar o Word.</p>
-      <p>O PDF é lido neste computador. Nenhum arquivo é enviado para servidores.</p>
+      <p>Escolha o PDF e digite o número do ato, ou importe o ato pelo link do DOU. Cada parágrafo aparece com o estilo do modelo na margem; os trechos que o programa pede para conferir ficam marcados em amarelo. Clique em um parágrafo ou célula para corrigir antes de gerar o Word.</p>
+      <p>O PDF e a página são lidos neste computador. Nenhum arquivo é enviado para servidores.</p>
     </div>
   </section>
 </main>
@@ -633,7 +669,9 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
             <label>Ação
               <select id="cons-acao">
                 <option>Substituir redação</option><option>Acrescentar dispositivo</option>
-                <option>Revogar dispositivo</option><option>Renumerar parágrafo único</option>
+                <option>Revogar dispositivo</option><option>Renumerar dispositivo</option>
+                <option>Nova redação de título</option><option>Anexo inteiro</option>
+                <option>Inserir nota (Vide, decisão judicial)</option>
               </select></label>
             <label>Corpo <input type="text" id="cons-corpo" list="cons-corpos" autocomplete="off"></label>
             <label class="cons-largo">Destino completo
@@ -641,7 +679,7 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
             <label>Alcance
               <select id="cons-alcance"><option>Somente este texto</option><option>Dispositivo completo</option></select></label>
             <label>Efeitos desta mudança <input type="text" id="cons-efeitos-op" placeholder="dd/mm/aaaa" autocomplete="off"></label>
-            <label>Novo § para renumeração <input type="text" id="cons-renumerar" autocomplete="off"></label>
+            <label>Novo número (renumeração) <input type="text" id="cons-renumerar" placeholder="3, VIII, d" autocomplete="off"></label>
           </div>
           <datalist id="cons-corpos"></datalist>
           <datalist id="cons-destinos"></datalist>
@@ -651,6 +689,7 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
           <button class="aba" type="button" role="tab" data-aba="nova" aria-selected="false">Nova redação — editar aqui</button>
           <button class="aba" type="button" role="tab" data-aba="trecho" aria-selected="false">Trecho do ato alterador</button>
           <button class="aba" type="button" role="tab" data-aba="notas" aria-selected="false">Efeitos e remissões</button>
+          <button class="aba" type="button" role="tab" data-aba="vide" aria-selected="false">Notas Vide — editar aqui</button>
           <button class="aba" type="button" role="tab" data-aba="obs" aria-selected="false">Observações</button>
         </div>
         <div class="cons-painel">
@@ -659,6 +698,9 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
             aria-label="Nova redação, uma linha por dispositivo, com o rótulo"></textarea>
           <pre class="cons-texto" id="cons-trecho" data-painel="trecho" tabindex="0" hidden></pre>
           <pre class="cons-texto" id="cons-notas" data-painel="notas" tabindex="0" hidden></pre>
+          <textarea class="cons-texto" id="cons-vide" data-painel="vide" hidden spellcheck="true"
+            aria-label="Notas Vide desta mudança, uma por linha"
+            placeholder="Uma nota por linha, como vai para o Word. Ex.: Vide art. 2º da EC 102/26, que estabelece ..."></textarea>
           <pre class="cons-texto" id="cons-obs" data-painel="obs" tabindex="0" hidden></pre>
         </div>
         <div class="cons-acoes">

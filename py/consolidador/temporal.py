@@ -7,6 +7,7 @@ from .index import ARTICLE, label
 from .model import Target, date_iso, norm, of_act
 from .parser import VERBS, END_QUOTE, reference_lists, foreign_target, line_location
 from . import refs as refparser
+from . import headings
 
 MONTHS={name:i for i,name in enumerate(("janeiro","fevereiro","marco","abril","maio","junho",
                                       "julho","agosto","setembro","outubro","novembro","dezembro"),1)}
@@ -19,6 +20,7 @@ PUBLICATION=re.compile(r"\b(?:d?a\s+)?data\s+(?:de\s+|da\s+)?(?:sua\s+)?publica[
 AFTER_DAYS=re.compile(r"(\d+|[a-zç ]+?)\s*(?:\([^)]*\)\s*)?dias\s+(?:ap[oó]s|depois\s+d[ae]|contados\s+d[ae]|a\s+partir\s+d[ae])\s+(?:a\s+|da\s+)?(?:data\s+d[ae]\s+)?(?:sua\s+)?publica[cç][aã]o",re.I)
 FIRST_DAY=re.compile(r"primeiro\s+dia\s+do\s+(?:(segundo|terceiro|quarto)\s+)?m[eê]s\s+(?:subsequente|seguinte)\s+ao\s+d[ae]\s+(?:sua\s+)?publica[cç][aã]o",re.I)
 NEXT_YEAR=re.compile(r"1[º°o]?\s+de\s+janeiro\s+do\s+(?:ano|exerc[ií]cio)(?:\s+financeiro)?\s+(?:subsequente|seguinte)\s+ao\s+d[ae]\s+(?:sua\s+)?publica[cç][aã]o",re.I)
+LEAD_DATE=re.compile(r"^\s*(?:Art(?:igo)?\.?\s*\d+[º°o]?(?:-[A-Z])?\.?\s*(?:[-–]\s*)?)?(?:[IVXLC]+\s*[-–]\s*)?a\s+partir\s+de\s+(?:\d{1,2}[º°o]?\s+de\s+[a-zç]+\s+de\s+\d{4}|\d{1,2}[./]\d{1,2}[./]\d{2,4})\s*,",re.I)
 SIGNATURE=re.compile(r"^(?:pal[aá]cio|bras[ií]lia|bel[eé]m|gabinete|sala\s+das\s+sess[oõ]es)\b|^[A-ZÁÉÍÓÚÂÊÔÃÕÇ .'-]{3,},\s*(?:em\s+)?\d{1,2}[º°]?\s+de\s+\w+\s+de\s+\d{4}",re.I)
 SELF=re.compile(r"\b(?:dest[ae]|nest[ae])\s+(?:Lei|Decreto|Emenda|Instru[cç][aã]o|Portaria|Resolu[cç][aã]o|Ato)\b",re.I)
 # END_QUOTE vem do parser: a citação também termina em "(AC)" e "(N.R.)", não só em "(NR)".
@@ -56,6 +58,20 @@ def dates_in(text,publication=""):
     return sorted(result)
 
 
+def _interval(text,values):
+    """'produzindo efeitos de 1º de outubro de 2025 a 31 de dezembro de 2025' (ou
+    'no período de ... a ...', 'entre ... e ...'): uma data inicial e uma final,
+    gravadas como 'início|fim'."""
+    if len(values)!=2 or not values[0][2]<values[1][2]:
+        return values
+    between=text[values[0][1]:values[1][0]]
+    before=text[max(0,values[0][0]-30):values[0][0]]
+    if (re.fullmatch(r"\s*(?:a|at[ée])\s*",between,re.I) and re.search(r"\b(?:de|desde|per[ií]odo\s+de)\s*$",before,re.I)) or \
+       (re.fullmatch(r"\s*e\s*",between,re.I) and re.search(r"\bentre\s*$",before,re.I)):
+        return [(values[0][0],values[1][1],values[0][2]+"|"+values[1][2])]
+    return values
+
+
 def publication_date(lines):
     for line in lines[:30]:
         if re.search(r"publicad[ao].*(?:dou|doe|diario|d\.o\.)",norm(line.text)):
@@ -69,7 +85,7 @@ def source_articles(lines):
     groups=[]; current=[]; quoted=False
     for line in lines:
         text=line.text.strip()
-        starts_quote=text.startswith(('“','"')) and label(text)
+        starts_quote=text.startswith(('“','"')) and (label(text) or headings.parse_line(text))
         if ARTICLE.match(text) and not quoted and not starts_quote:
             if current:groups.append(current)
             current=[line]
@@ -132,6 +148,16 @@ def assign_effects(lines,operations,base,fallback="",publication=""):
                 continue
             header.append(line.text)
         header_text=' '.join(header)
+        lead=LEAD_DATE.match(header_text)
+        if lead and VERBS.search(header_text):
+            # "Art. 3º A partir de 1º de janeiro de 2027, o art. 146 passa a vigorar ...":
+            # a data vale para as mudanças deste comando (EC 132/23, LC 214/25).
+            values=dates_in(lead[0],publication)
+            if values:
+                for op in operations:
+                    if group[0].text in op.source:
+                        inline_rules.setdefault(op.id,[]).append((values[0][2],header_text))
+            continue
         if EFFECTS.search(header_text):
             kind,marker_re="effects",EFFECTS
         elif VIGOR.search(header_text) and not re.search(r"seguintes?\s+(?:altera|reda)",norm(header_text)):
@@ -165,6 +191,7 @@ def assign_effects(lines,operations,base,fallback="",publication=""):
             if marker:
                 values=[v for v in values if v[0]>=marker.end()]
             if not values:continue
+            values=_interval(text,values)
             if len({v[2] for v in values})!=1:
                 warnings.append("Cláusula com mais de uma data: confira os efeitos na revisão. "+text)
                 tail=text[scope.start():] if scope else text[values[-1][1]:]
@@ -223,7 +250,8 @@ def assign_effects(lines,operations,base,fallback="",publication=""):
         chosen=matched if matched else defaults if len(default_values)==1 else []
         if not matched and len(default_values)>1:
             op.extraction_warning+=" Há datas gerais de efeitos divergentes; confirme os efeitos desta mudança."
-        op.effects=chosen[0][0] if chosen else fallback
+        value=chosen[0][0] if chosen else fallback
+        op.effects,_,op.effects_until=value.partition("|")
         op.effects_source="\n".join(dict.fromkeys(s for _,s in chosen))
     if fallback and default_values and fallback not in default_values:
         warnings.append("A data geral informada difere da cláusula do ato. As propostas usam as datas expressas identificadas; confira a data de cada mudança.")

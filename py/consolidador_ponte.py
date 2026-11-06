@@ -10,6 +10,7 @@ Cada função devolve um JSON: {"ok": true, ...} ou {"ok": false, "erro": "..."}
 from __future__ import annotations
 
 import json
+import re
 import traceback
 from pathlib import Path, PureWindowsPath
 
@@ -17,7 +18,7 @@ from consolidador import __version__
 from consolidador.engine import analyze, generate, save_plan, validate_plan
 from consolidador.index import Legislation
 from consolidador.io import prepare_base
-from consolidador.model import Operation, Plan, Target, date_iso, digest
+from consolidador.model import Operation, Plan, Target, date_iso, digest, of_act
 from consolidador.observations import analysis_observations, analysis_summary
 from consolidador.report import report
 
@@ -26,12 +27,14 @@ CACHE = PASTA / "cache"
 
 # Os mesmos rótulos da janela do programa (consolidador/gui.py)
 ACOES = {"Substituir redação": "replace", "Acrescentar dispositivo": "add", "Revogar dispositivo": "revoke",
-         "Renumerar parágrafo único": "rename"}
+         "Renumerar dispositivo": "rename", "Nova redação de título": "heading", "Anexo inteiro": "annex",
+         "Inserir nota (Vide, decisão judicial)": "note"}
 ROTULO_ACAO = {v: k for k, v in ACOES.items()}
 ALCANCES = {"Somente este texto": "head", "Dispositivo completo": "subtree"}
 ANO_NOTAS = ("auto", "2", "4")
 PDF_REVIEW = "Confira a extração de PDF/HTML"
-CURTO = {"replace": "Substituir", "add": "Acrescentar", "revoke": "Revogar", "rename": "Renumerar"}
+CURTO = {"replace": "Substituir", "add": "Acrescentar", "revoke": "Revogar", "rename": "Renumerar",
+         "heading": "Título", "annex": "Anexo", "note": "Nota"}
 
 ESTADO: dict = {"plan": None, "base": None}
 
@@ -87,7 +90,13 @@ def _texto_antes(op: Operation) -> str:
 
 
 def _notas(op: Operation) -> str:
-    notes = ["EFEITOS DESTA MUDANÇA: " + (op.effects or "data não identificada")]
+    notes = ["EFEITOS DESTA MUDANÇA: " + (br_date(op.effects) or "data não identificada")
+             + (" a " + br_date(op.effects_until) if op.effects_until else "")]
+    if op.later_versions:
+        versoes = [f"A partir de {br_date(v.get('effects', ''))}"
+                   f"{' até ' + br_date(v['effects_until']) if v.get('effects_until') else ''}:\n"
+                   + "\n".join(v.get("lines", [])) for v in op.later_versions]
+        notes.extend(("REDAÇÕES SEGUINTES DESTE DISPOSITIVO (a da aba Nova redação vale primeiro)", "\n\n".join(versoes)))
     if op.effects_source:
         notes.extend(("CLÁUSULA EXTRAÍDA DO ATO", op.effects_source))
     if op.remissions:
@@ -104,6 +113,18 @@ def _dica(op: Operation) -> str:
         return "Revogação: não exige nova redação digitada. O programa insere a marca REVOGADO e mantém o histórico."
     if op.action == "rename":
         return "Renumeração: confira o novo número em Corrigir ação, destino e datas. Não exige nova redação digitada."
+    if op.action == "note":
+        return ("Nota sem mudança de texto (Vide, decisão do STF, regulamentação): escreva a nota na aba Nova redação, "
+                "uma por linha. Ela entra logo acima do dispositivo.")
+    if op.action == "annex":
+        return ("Anexo inteiro: o texto e as tabelas vêm do anexo do ato (Word). O anexo anterior vai para o histórico. "
+                "Aqui só a data de efeitos pode ser corrigida; confira as tabelas no Word gerado.")
+    if op.action == "heading":
+        return ("Título (capítulo, seção...): na aba Nova redação, uma linha para o rótulo e outra para a denominação. "
+                "O título anterior vai para o histórico.")
+    if op.renumber_from:
+        return ("Esta mudança renumera o parágrafo único para § 1º e dá nova redação ao § 1º. Confira as abas e, se "
+                "editar, clique em Validar correção.")
     if op.new_lines:
         return "Confira as três abas. Se editar a nova redação, clique em Validar correção antes de gerar o Word."
     return "A nova redação está vazia. Informe o texto com o rótulo do dispositivo e valide a correção."
@@ -121,7 +142,7 @@ def _op_json(op: Operation) -> dict:
         "motivo": op.reason, "antes": _texto_antes(op), "nova": "\n".join(op.new_lines),
         "trecho": op.source.strip() or ("Nenhum trecho de origem foi extraído para esta proposta. "
                                         "Confira o comando diretamente no ato alterador."),
-        "notas": _notas(op), "dica": _dica(op),
+        "notas": _notas(op), "dica": _dica(op), "vide": "\n".join(op.remissions),
         "pdf_pendente": op.status == "revisar" and op.extraction_warning.startswith(PDF_REVIEW),
     }
 
@@ -192,11 +213,18 @@ def alternar(op_id: str) -> str:
 
 
 def corrigir(op_id: str, acao: str, corpo: str, destino: str, alcance: str, efeitos: str, renumerar: str,
-             nova: str) -> str:
-    """Validar correção (Application.correct da janela do programa)."""
+             nova: str, vide: str | None = None) -> str:
+    """Validar correção (Application.correct da janela do programa). vide: as notas Vide editadas na aba
+    "Notas Vide — editar aqui", uma por linha (None quando não foram editadas)."""
     try:
         plan, base = _plano()
         op = _proposta(op_id)
+        if op.action == "annex" and ACOES.get(acao) == "annex":
+            # Anexo inteiro: só a data de efeitos é editável (como na janela do programa)
+            op.effects = date_iso(efeitos or "")
+            validate_plan(plan, base)
+            op.selected = op.status == "pronto"
+            return _estado(mensagem=op.id + ": " + op.reason, ativo=op.id)
         if acao not in ACOES:
             raise ValueError("Escolha a ação.")
         if alcance not in ALCANCES:
@@ -210,6 +238,9 @@ def corrigir(op_id: str, acao: str, corpo: str, destino: str, alcance: str, efei
         if target != op.target or ACOES[acao] != op.action:
             op.extra_targets = []
             op.renumber_from = ""
+            op.later_versions = []
+        if isinstance(vide, str):          # None (ou JsNull do navegador): as notas Vide não foram editadas
+            op.remissions = [linha.strip() for linha in vide.splitlines() if linha.strip()]
         op.target = target
         op.action = ACOES[acao]
         op.scope = ALCANCES[alcance]
@@ -273,9 +304,10 @@ def _sincronizar(ato: str, publicacao: str, efeitos: str, ano_notas: str) -> Non
     """Application.sync: os campos do ato, publicação, efeitos e ano nas notas valem na geração."""
     plan, _ = _plano()
     citation = (ato or "").strip()
-    if citation != plan.citation:
+    if citation != plan.citation and plan.citation:
+        antes = re.compile(r"\b(?:da|do) " + re.escape(plan.citation))
         for op in plan.operations:
-            op.remissions = [s.replace("da " + plan.citation, "da " + citation) for s in op.remissions]
+            op.remissions = [antes.sub(of_act(citation) + " " + citation, s) for s in op.remissions]
     plan.citation = citation
     plan.date_style = ano_notas if ano_notas in ANO_NOTAS else "auto"
     plan.publication = date_iso(publicacao or "")

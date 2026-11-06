@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Importa um ato do PDF do diário oficial para Word editável da SEFA."""
+"""Importa um ato do PDF do diário oficial, ou do link da página do ato no DOU, para Word editável da SEFA."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import argparse
 import base64
 import re
 import sys
+import threading
+import webbrowser
 from pathlib import Path
 
 import fitz
@@ -16,6 +18,7 @@ from extrator_pdf import (Candidate, Extraction, ParagraphBlock, build_word, ext
                          formatted_table_matrix, matrix_signature, monetary_values, suggested_candidate,
                          table_page_parts, write_pdf_report)
 from formatador_sefa import DEFAULT_MODEL, STYLES, show_and_open
+from importar_dou import extrair_do_link, nome_sugerido
 from links_no_word import aplicar_e_registrar, executar_com_progresso, texto_final
 
 
@@ -129,10 +132,12 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("SEFA 3.24 — importar ato completo do PDF")
+            self.root.title("SEFA 3.28.1 — importar ato completo do PDF ou do link do DOU")
             self.root.geometry("1100x780")
             self.root.minsize(800, 580)
+            self.source_var = tk.StringVar(value="pdf")     # "pdf" ou "link"
             self.pdf_var = tk.StringVar()
+            self.link_var = tk.StringVar()
             self.act_var = tk.StringVar()
             self.max_pages_var = tk.StringVar(value="12")
             self.model_var = tk.StringVar(value=str(DEFAULT_MODEL))
@@ -146,7 +151,10 @@ def run_gui() -> None:
             self.read_pdf = ""
             self.read_act = ""
             self.read_max_pages = ""
+            self.read_link = ""
+            self.read_source = ""
             self.layout()
+            self.change_source()
 
         def layout(self) -> None:
             root = self.root
@@ -155,25 +163,42 @@ def run_gui() -> None:
             inputs = ttk.Frame(root, padding=10)
             inputs.grid(row=0, column=0, sticky="ew")
             inputs.columnconfigure(1, weight=1)
-            ttk.Label(inputs, text="PDF do diário oficial").grid(row=0, column=0, sticky="w")
-            ttk.Entry(inputs, textvariable=self.pdf_var).grid(row=0, column=1, sticky="ew", padx=7, pady=3)
-            ttk.Button(inputs, text="Escolher PDF…", command=self.pick_pdf).grid(row=0, column=2)
-            ttk.Label(inputs, text="Número do ato").grid(row=1, column=0, sticky="w")
-            ttk.Entry(inputs, textvariable=self.act_var).grid(row=1, column=1, sticky="ew", padx=7, pady=3)
-            ttk.Button(inputs, text="Analisar PDF", command=self.analyze).grid(row=1, column=2, sticky="ew")
-            ttk.Label(inputs, text="Modelo Word da SEFA").grid(row=2, column=0, sticky="w")
-            ttk.Entry(inputs, textvariable=self.model_var).grid(row=2, column=1, sticky="ew", padx=7, pady=3)
-            ttk.Button(inputs, text="Outro modelo…", command=self.pick_model).grid(row=2, column=2)
-            ttk.Label(inputs, text="Máximo de páginas do ato").grid(row=3, column=0, sticky="w")
-            ttk.Entry(inputs, textvariable=self.max_pages_var, width=8).grid(row=3, column=1, sticky="w", padx=7, pady=3)
+            ttk.Label(inputs, text="Origem do ato").grid(row=0, column=0, sticky="w")
+            origem = ttk.Frame(inputs)
+            origem.grid(row=0, column=1, columnspan=2, sticky="w", padx=7, pady=3)
+            ttk.Radiobutton(origem, text="PDF do diário oficial", value="pdf", variable=self.source_var,
+                            command=self.change_source).pack(side="left")
+            ttk.Radiobutton(origem, text="Link do ato no DOU (in.gov.br), sem baixar o PDF", value="link",
+                            variable=self.source_var, command=self.change_source).pack(side="left", padx=(18, 0))
+            ttk.Label(inputs, text="PDF do diário oficial").grid(row=1, column=0, sticky="w")
+            self.pdf_entry = ttk.Entry(inputs, textvariable=self.pdf_var)
+            self.pdf_entry.grid(row=1, column=1, sticky="ew", padx=7, pady=3)
+            self.pdf_button = ttk.Button(inputs, text="Escolher PDF…", command=self.pick_pdf)
+            self.pdf_button.grid(row=1, column=2, sticky="ew")
+            ttk.Label(inputs, text="Link do ato no DOU").grid(row=2, column=0, sticky="w")
+            self.link_entry = ttk.Entry(inputs, textvariable=self.link_var)
+            self.link_entry.grid(row=2, column=1, sticky="ew", padx=7, pady=3)
+            self.saved_button = ttk.Button(inputs, text="Página salva…", command=self.pick_saved_page)
+            self.saved_button.grid(row=2, column=2, sticky="ew")
+            ttk.Label(inputs, text="Número do ato").grid(row=3, column=0, sticky="w")
+            self.act_entry = ttk.Entry(inputs, textvariable=self.act_var)
+            self.act_entry.grid(row=3, column=1, sticky="ew", padx=7, pady=3)
+            self.analyze_button = ttk.Button(inputs, text="Analisar PDF", command=self.analyze)
+            self.analyze_button.grid(row=3, column=2, sticky="ew")
+            ttk.Label(inputs, text="Modelo Word da SEFA").grid(row=4, column=0, sticky="w")
+            ttk.Entry(inputs, textvariable=self.model_var).grid(row=4, column=1, sticky="ew", padx=7, pady=3)
+            ttk.Button(inputs, text="Outro modelo…", command=self.pick_model).grid(row=4, column=2, sticky="ew")
+            ttk.Label(inputs, text="Máximo de páginas do ato").grid(row=5, column=0, sticky="w")
+            self.max_entry = ttk.Entry(inputs, textvariable=self.max_pages_var, width=8)
+            self.max_entry.grid(row=5, column=1, sticky="w", padx=7, pady=3)
             ttk.Checkbutton(inputs, text="Padronizar grafia de municípios (os ajustes vão para o relatório, quando gerado)",
                             variable=self.municipalities_var, command=self.change_case).grid(
-                                row=4, column=1, columnspan=2, sticky="w", padx=7, pady=3)
+                                row=6, column=1, columnspan=2, sticky="w", padx=7, pady=3)
             ttk.Checkbutton(inputs, text="Criar hyperlinks das leis, decretos etc. citados "
                             "(tabela local, site de legislação da SEFA e Planalto)",
-                            variable=self.links_var).grid(row=5, column=1, columnspan=2, sticky="w", padx=7, pady=3)
+                            variable=self.links_var).grid(row=7, column=1, columnspan=2, sticky="w", padx=7, pady=3)
             ttk.Checkbutton(inputs, text="Gerar relatório de conferência (HTML ao lado do Word)",
-                            variable=self.report_var).grid(row=6, column=1, columnspan=2, sticky="w", padx=7, pady=3)
+                            variable=self.report_var).grid(row=8, column=1, columnspan=2, sticky="w", padx=7, pady=3)
             notebook = ttk.Notebook(root)
             notebook.grid(row=1, column=0, sticky="nsew", padx=10)
             for title, tag, columns in (
@@ -208,8 +233,10 @@ def run_gui() -> None:
             self.role_combo.grid(row=1, column=1, sticky="w")
             controls = ttk.Frame(editor)
             controls.grid(row=1, column=2, sticky="e")
-            ttk.Button(controls, text="Ver tabela no PDF", command=self.view_table).pack(side="left", padx=(0, 8))
-            ttk.Button(controls, text="Conferi a tabela no PDF", command=self.review_table).pack(side="left", padx=(0, 8))
+            self.view_button = ttk.Button(controls, text="Ver tabela no PDF", command=self.view_table)
+            self.view_button.pack(side="left", padx=(0, 8))
+            self.review_button = ttk.Button(controls, text="Conferi a tabela no PDF", command=self.review_table)
+            self.review_button.pack(side="left", padx=(0, 8))
             ttk.Button(controls, text="Aplicar correção", command=self.edit).pack(side="left")
             bottom = ttk.Frame(root, padding=(10, 0, 10, 10))
             bottom.grid(row=3, column=0, sticky="ew")
@@ -227,6 +254,30 @@ def run_gui() -> None:
             if path:
                 self.model_var.set(path)
 
+        def pick_saved_page(self) -> None:
+            path = filedialog.askopenfilename(title="Página do ato salva do DOU",
+                                              filetypes=[("Página da Web", "*.mhtml *.mht *.html *.htm"), ("Todos", "*.*")])
+            if path:
+                self.link_var.set(path)
+
+        def link_mode(self) -> bool:
+            return self.source_var.get() == "link"
+
+        def change_source(self) -> None:
+            link = self.link_mode()
+            for widget in (self.pdf_entry, self.pdf_button, self.act_entry, self.max_entry):
+                widget.configure(state="disabled" if link else "normal")
+            for widget in (self.link_entry, self.saved_button):
+                widget.configure(state="normal" if link else "disabled")
+            self.analyze_button.configure(text="Importar do link" if link else "Analisar PDF")
+            self.view_button.configure(text="Ver ato no DOU" if link else "Ver tabela no PDF")
+            self.review_button.configure(text="Conferi a tabela no DOU" if link else "Conferi a tabela no PDF")
+            if not self.extraction:
+                self.status.set("Cole o link da página do ato no DOU (https://www.in.gov.br/web/dou/-/...) e clique em "
+                                "Importar do link. Sem acesso à internet: salve a página no navegador (Ctrl+S) e use "
+                                "Página salva…" if link else
+                                "Escolha o PDF e digite o número do ato, por exemplo 494/2026-SEFA.GS.")
+
         def change_case(self) -> None:
             self.selection = None
             self.role.set("")
@@ -234,6 +285,9 @@ def run_gui() -> None:
             self.refresh()
 
         def analyze(self) -> None:
+            if self.link_mode():
+                self.analyze_link()
+                return
             path = Path(self.pdf_var.get().strip())
             query = self.act_var.get().strip()
             if not path.is_file():
@@ -257,8 +311,47 @@ def run_gui() -> None:
                 return
             self.read_pdf, self.read_act = self.pdf_var.get(), query
             self.read_max_pages = self.max_pages_var.get()
+            self.read_source = "pdf"
             self.selection = None
             self.refresh()
+
+        def analyze_link(self) -> None:
+            endereco = self.link_var.get().strip()
+            if not endereco:
+                messagebox.showinfo("Link do DOU", "Cole o link da página do ato no DOU, por exemplo "
+                                    "https://www.in.gov.br/web/dou/-/medida-provisoria-n-1.399-de-4-de-novembro-"
+                                    "de-2026-741754451, ou escolha a página salva.")
+                return
+            self.analyze_button.configure(state="disabled")
+            self.status.set("Buscando a página do ato no DOU...")
+            estado: dict = {}
+
+            def trabalho() -> None:
+                try:
+                    estado["resultado"] = extrair_do_link(endereco, log=lambda m: estado.update(passo=m))
+                except Exception as erro:          # noqa: BLE001 - mostrado na janela
+                    estado["erro"] = erro
+
+            tarefa = threading.Thread(target=trabalho, daemon=True)
+            tarefa.start()
+
+            def acompanhar() -> None:
+                if tarefa.is_alive():
+                    if estado.get("passo"):
+                        self.status.set(estado["passo"])
+                    self.root.after(200, acompanhar)
+                    return
+                self.analyze_button.configure(state="normal")
+                if "erro" in estado:
+                    self.status.set("A importação pelo link não deu certo.")
+                    messagebox.showerror("Não foi possível importar do DOU", str(estado["erro"]))
+                    return
+                self.extraction = estado["resultado"]
+                self.read_link, self.read_source = endereco, "link"
+                self.selection = None
+                self.refresh()
+
+            self.root.after(200, acompanhar)
 
         def refresh(self) -> None:
             if not self.extraction:
@@ -278,9 +371,10 @@ def run_gui() -> None:
                                               tags=("attention",) if table.issues else ())
             n = sum(sum(t.source_numbers.values()) for t in self.extraction.tables)
             errors = check_table_numbers(self.extraction)
-            self.status.set(f"Páginas {', '.join(map(str, self.extraction.pages))}. "
+            origem = "da página do DOU" if self.extraction.source_url or self.read_source == "link" else "do PDF"
+            self.status.set(f"Páginas {', '.join(map(str, self.extraction.pages)) or '-'}. "
                             f"{len(self.extraction.paragraphs)} trechos, {len(self.extraction.tables)} tabelas, "
-                            f"{n} valores monetários lidos do PDF. " +
+                            f"{n} valores monetários lidos {origem}. " +
                             ("Revise: " + errors[0] if errors else "Confira o texto e a diagramação no Word.") +
                             (" BLOQUEIO: " + "; ".join(self.extraction.blocking_issues)
                              if self.extraction.blocking_issues else "") +
@@ -331,6 +425,12 @@ def run_gui() -> None:
             current_tree.see(current_id)
 
         def view_table(self) -> None:
+            if self.extraction and self.read_source == "link":
+                if self.extraction.source_url:
+                    webbrowser.open(self.extraction.source_url)
+                else:
+                    messagebox.showinfo("Ato no DOU", "Abra no navegador a página salva que foi importada.")
+                return
             if not self.extraction or not self.selection or self.selection[0] != "cell":
                 messagebox.showinfo("Selecione uma célula", "Selecione uma célula da tabela para ver seu recorte no PDF.")
                 return
@@ -379,11 +479,17 @@ def run_gui() -> None:
                 self.refresh()
 
         def save(self) -> None:
-            if (not self.extraction or self.pdf_var.get() != self.read_pdf or
+            if self.link_mode():
+                if not self.extraction or self.read_source != "link" or self.link_var.get().strip() != self.read_link:
+                    messagebox.showinfo("Importe o ato", "Cole o link do DOU e clique em Importar do link antes de salvar.")
+                    return
+                suggested = nome_sugerido(self.extraction) + "_SEFA.docx"
+            elif (not self.extraction or self.read_source != "pdf" or self.pdf_var.get() != self.read_pdf or
                     self.act_var.get().strip() != self.read_act or self.max_pages_var.get() != self.read_max_pages):
                 messagebox.showinfo("Analise o PDF", "Escolha o PDF e clique em Analisar PDF antes de salvar.")
                 return
-            suggested = re.sub(r"[^\w.-]+", "_", self.read_act).strip("_") + "_SEFA.docx"
+            else:
+                suggested = re.sub(r"[^\w.-]+", "_", self.read_act).strip("_") + "_SEFA.docx"
             chosen = filedialog.asksaveasfilename(title="Salvar ato completo", defaultextension=".docx",
                                                    initialfile=suggested, filetypes=[("Word", "*.docx")])
             if not chosen:
@@ -402,8 +508,9 @@ def run_gui() -> None:
                 messagebox.showerror("Não foi possível gerar o Word", str(error))
                 return
             arquivos = f"Word: {output}" + (f"\nRelatório: {report}" if report else "")
+            original = "a página do DOU" if self.read_source == "link" else "o PDF"
             if not self.links_var.get():
-                show_and_open(messagebox, "Arquivos criados", f"{arquivos}\n\nCompare com o PDF antes de usar.", output)
+                show_and_open(messagebox, "Arquivos criados", f"{arquivos}\n\nCompare com {original} antes de usar.", output)
                 return
             executar_com_progresso(
                 self.root, "Criando hyperlinks de legislação",
@@ -411,14 +518,17 @@ def run_gui() -> None:
                 lambda resumo, erro: show_and_open(
                     messagebox, "Arquivos criados",
                     f"{arquivos}\n\n{texto_final(resumo, erro, report is not None)}\n\n"
-                    "Compare com o PDF antes de usar.", output))
+                    f"Compare com {original} antes de usar.", output))
 
     App().root.mainloop()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Importa um ato e tabelas do PDF para Word editável da SEFA.")
-    parser.add_argument("--pdf", type=Path, help="PDF do diário oficial; sem este argumento, abre uma janela")
+    parser = argparse.ArgumentParser(description="Importa um ato e tabelas do PDF, ou do link do DOU, para Word "
+                                                 "editável da SEFA.")
+    parser.add_argument("--pdf", type=Path, help="PDF do diário oficial; sem este argumento nem --url, abre uma janela")
+    parser.add_argument("--url", help="Link da página do ato no DOU (https://www.in.gov.br/web/dou/-/...) ou "
+                                      "página salva (.html), no lugar do PDF")
     parser.add_argument("--act", help="Trecho único da epígrafe, por exemplo 494/2026-SEFA.GS")
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--max-pages", type=int, default=12, help="Limite de páginas pesquisadas para o ato (padrão: 12)")
@@ -437,7 +547,21 @@ def main() -> int:
                         help="Quando o PDF tem mais de um ato com esse identificador: qual importar (1 = o primeiro)")
     args = parser.parse_args()
     try:
-        if args.pdf:
+        if args.url:
+            if args.pdf or not args.output:
+                parser.error("--url requer --output e não se usa com --pdf")
+            extraction = extrair_do_link(args.url, log=lambda m: print(m, file=sys.stderr))
+            extraction.limits_reviewed = args.confirmar_limites
+            report = None
+            if args.relatorio or args.report:
+                report = args.report or args.output.with_name(args.output.stem + "_CONFERIR.html")
+            export(extraction, args.model, args.output, report, args.force, not args.preservar_grafia)
+            print(f"Word: {args.output}" + (f"\nRelatório: {report}" if report else "") +
+                  f"\nAto: {extraction.query}; tabelas: {len(extraction.tables)}; conferir: {len(extraction.issues)}")
+            if not args.sem_links:
+                resumo = aplicar_e_registrar(args.output, report)
+                print(texto_final(resumo, None, com_relatorio=report is not None))
+        elif args.pdf:
             if not args.act or not args.output:
                 parser.error("--pdf requer --act e --output")
             candidates = find_candidates(args.pdf, args.act)

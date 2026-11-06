@@ -1,5 +1,5 @@
-/* Formatador SEFA na web: tela de importar ato do PDF.
-   Toda a leitura do PDF e a geração do Word acontecem no worker.js (Python/Pyodide). */
+/* Formatador SEFA na web: tela de importar ato do PDF ou da página salva do DOU.
+   Toda a leitura do PDF e da página e a geração do Word acontecem no worker.js (Python/Pyodide). */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -25,9 +25,11 @@ const est = {
   motorPronto: false,
   ocupado: false,
   pdf: null,          // File
+  origem: "pdf",      // "pdf" (PDF do diário) ou "dou" (página do ato salva do DOU)
+  paginaDou: null,    // File (.mhtml ou .html)
   modelo: null,       // File (opcional)
   analise: null,      // último estado vindo do Python
-  analisado: null,    // {pdf, consulta, maxPaginas} usados na análise
+  analisado: null,    // {origem, pdf, consulta, maxPaginas, pagina, link} usados na análise
   aba: "texto",
   selPar: null,
   selCel: null,       // {t, r, c}
@@ -104,7 +106,7 @@ worker.onmessage = ({ data }) => {
     definirMotor("pronto", "Pronto");
     $("dica-links").textContent = `Usa a tabela de links do site (${data.info.tabela_links} atos) e os links que você salvou. ` +
       "As demais citações ficam em amarelo, e a página mostra antes de salvar as que ficaram sem link, para você procurá-las no site da SEFA.";
-    $("rodape").textContent = `Formatador SEFA 3.24, versão web. PyMuPDF ${data.info.pymupdf}, ` +
+    $("rodape").textContent = `Formatador SEFA 3.28.1, versão web. PyMuPDF ${data.info.pymupdf}, ` +
       `pdfplumber ${data.info.pdfplumber}. O PDF é processado neste computador.`;
     if (typeof aoProntoConsolidador === "function") aoProntoConsolidador(data.info);
     return atualizar();
@@ -146,13 +148,78 @@ async function executar(acao, dados, transferir) {
 }
 
 /* ---------------- passo 1: PDF ---------------- */
+const EXT_PAGINA = /\.(mhtml|mht|html?)$/i;
+
+/* "o PDF" ou "a página do DOU", conforme a origem da análise atual (ou da escolhida) */
+function fonte(a = est.analise) {
+  const dou = a ? a.origem === "dou" : est.origem === "dou";
+  return dou ? { o: "a página do DOU", no: "na página do DOU", do: "do DOU", nome: "página do DOU" }
+    : { o: "o PDF", no: "no PDF", do: "do PDF", nome: "PDF" };
+}
+
+function mudarOrigem(origem) {
+  est.origem = origem === "dou" ? "dou" : "pdf";
+  for (const r of document.querySelectorAll('input[name="origem"]')) r.checked = r.value === est.origem;
+  const dou = est.origem === "dou";
+  $("origem-pdf").hidden = dou;
+  $("origem-dou").hidden = !dou;
+  $("campos-pdf").hidden = dou;
+  $("dica-dou").hidden = !dou;
+  $("p1-titulo").textContent = dou ? "Página do ato no DOU" : "PDF do diário oficial";
+  $("p2-titulo").textContent = dou ? "Importar" : "Número do ato";
+  try { localStorage.setItem("formatador-sefa:origem", est.origem); } catch { /* sem armazenamento */ }
+  atualizar();
+}
+for (const r of document.querySelectorAll('input[name="origem"]')) r.addEventListener("change", () => mudarOrigem(r.value));
+
+function escolherPaginaDou(arquivo) {
+  if (!arquivo) return;
+  if (!EXT_PAGINA.test(arquivo.name)) {
+    $("analisar-erro").replaceChildren(caixaErro("Arquivo não aceito",
+      `${arquivo.name} não é uma página salva. No DOU, aperte Ctrl+S e salve como “Página da Web, arquivo único” (.mhtml).`));
+    return;
+  }
+  est.paginaDou = arquivo;
+  $("dou-nome").textContent = arquivo.name;
+  $("dou-tam").textContent = arquivo.size > 1048576 ? `${(arquivo.size / 1048576).toFixed(1).replace(".", ",")} MB`
+    : `${Math.max(1, Math.round(arquivo.size / 1024))} KB`;
+  $("soltar-dou").hidden = true;
+  $("dou-escolhido").hidden = false;
+  $("analisar-erro").replaceChildren();
+  if (est.origem !== "dou") mudarOrigem("dou");
+  atualizar();
+  $("analisar").focus();
+}
+$("arquivo-dou").addEventListener("change", (e) => { escolherPaginaDou(e.target.files[0]); e.target.value = ""; });
+$("trocar-dou").addEventListener("click", () => $("arquivo-dou").click());
+const soltarDou = $("soltar-dou");
+["dragenter", "dragover"].forEach((t) => soltarDou.addEventListener(t, (e) => { e.preventDefault(); soltarDou.classList.add("sobre"); }));
+["dragleave", "drop"].forEach((t) => soltarDou.addEventListener(t, () => soltarDou.classList.remove("sobre")));
+soltarDou.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); escolherPaginaDou(e.dataTransfer.files[0]); });
+
+const LINK_DOU = /^https?:\/\/(?:www\.)?in\.gov\.br\/(?:en\/)?web\/dou\/-\/\S+$/i;
+$("link-dou").addEventListener("input", atualizar);
+$("link-dou").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("analisar").disabled) analisar(); });
+$("abrir-dou").addEventListener("click", () => {
+  const link = $("link-dou").value.trim();
+  if (!LINK_DOU.test(link)) {
+    $("analisar-erro").replaceChildren(caixaErro("Link do DOU",
+      "Cole o endereço da página do ato no DOU, que começa por https://www.in.gov.br/web/dou/-/ (abra o ato no DOU e copie da barra de endereço)."));
+    return;
+  }
+  $("analisar-erro").replaceChildren();
+  window.open(link, "_blank", "noopener");
+});
+
 function escolherPdf(arquivo) {
   if (!arquivo) return;
+  if (EXT_PAGINA.test(arquivo.name)) return escolherPaginaDou(arquivo);   // página salva solta na área do PDF
   if (!/\.pdf$/i.test(arquivo.name) && arquivo.type !== "application/pdf") {
     $("analisar-erro").replaceChildren(caixaErro("Arquivo não é PDF", `${arquivo.name} não parece ser um PDF do diário oficial.`));
     return;
   }
   est.pdf = arquivo;
+  if (est.origem !== "pdf") mudarOrigem("pdf");
   $("pdf-nome").textContent = arquivo.name;
   $("pdf-tam").textContent = `${(arquivo.size / 1048576).toFixed(1).replace(".", ",")} MB`;
   $("soltar").hidden = true;
@@ -171,7 +238,7 @@ document.addEventListener("dragover", (e) => e.preventDefault());
 document.addEventListener("drop", (e) => {
   e.preventDefault();
   // na aba Aplicar alterações, soltar fora das áreas próprias não escolhe o PDF do formatador
-  if (document.body.dataset.modo !== "consolidar" && e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]);
+  if (document.body.dataset.modo !== "consolidar" && e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]);   // PDF ou página salva
 });
 
 /* ---------------- passo 2: analisar ---------------- */
@@ -181,12 +248,120 @@ $("consulta").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("
 $("analisar").addEventListener("click", analisar);
 
 function entradaAtual() {
-  return { pdf: est.pdf, consulta: $("consulta").value.trim(), maxPaginas: $("max-paginas").value.trim() };
+  return { origem: est.origem, pdf: est.pdf, consulta: $("consulta").value.trim(), maxPaginas: $("max-paginas").value.trim(),
+    pagina: est.paginaDou, link: $("link-dou").value.trim() };
 }
 function analiseDesatualizada() {
   if (!est.analisado) return false;
   const a = entradaAtual();
-  return a.pdf !== est.analisado.pdf || a.consulta !== est.analisado.consulta || a.maxPaginas !== est.analisado.maxPaginas;
+  const b = est.analisado;
+  if (a.origem !== b.origem) return true;
+  if (a.origem === "dou") return a.pagina !== b.pagina || (b.pagina ? false : a.link !== b.link);
+  return a.pdf !== b.pdf || a.consulta !== b.consulta || a.maxPaginas !== b.maxPaginas;
+}
+
+/* Página do DOU pelo link: o navegador não deixa o site ler o in.gov.br direto (CORS), então a leitura
+   tenta direto e, se o DOU recusar, pelo intermediário público allorigins (o mesmo do Formatador CONFAZ).
+   As figuras do ato são baixadas do mesmo jeito. Se nada der certo, a pessoa salva a página (.mhtml). */
+const INTERMEDIARIO = "https://api.allorigins.win/raw?url=";
+const MAX_FIGURAS = 60;
+
+async function buscarComPrazo(url, segundos) {
+  const ctrl = new AbortController();
+  const prazo = setTimeout(() => ctrl.abort(), segundos * 1000);
+  try {
+    const resp = await fetch(url, { credentials: "omit", cache: "no-store", signal: ctrl.signal });
+    if (!resp.ok) throw new Error(`resposta ${resp.status}`);
+    return resp;
+  } finally {
+    clearTimeout(prazo);
+  }
+}
+
+/* o texto da página do ato, direto ou pelo intermediário; null se não vier */
+async function lerPaginaPeloLink(link) {
+  for (const url of [link, INTERMEDIARIO + encodeURIComponent(link)]) {
+    try {
+      const texto = await (await buscarComPrazo(url, url === link ? 15 : 40)).text();
+      if (texto.includes("texto-dou")) return texto;
+    } catch { /* tenta o próximo caminho */ }
+  }
+  return null;
+}
+
+/* endereço da figura como o importador lê: páginas com carregamento adiado guardam o verdadeiro em data-src */
+function enderecoFigura(img) {
+  const src = (img.getAttribute("src") || "").trim();
+  for (const chave of ["data-src", "data-original", "data-lazy-src", "data-full-src"]) {
+    const alt = (img.getAttribute(chave) || "").trim();
+    if (alt && (!src || src.startsWith("data:image/gif") || src.toLowerCase().includes("placeholder"))) return alt;
+  }
+  return src;
+}
+
+/* baixa as figuras do ato (as da área do texto); as que não vierem saem no Word com a marca [FIGURA DO ATO] */
+async function figurasPeloLink(html, link) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let imgs = [...doc.querySelectorAll(".texto-dou img, [class*='texto-dou'] img")];
+  if (!imgs.length) imgs = [...doc.querySelectorAll(".single-full-dou-content img, #materia img")];
+  const fontes = [...new Set(imgs.map(enderecoFigura).filter((s) => s && !s.startsWith("data:")))].slice(0, MAX_FIGURAS);
+  const baixar = async (src) => {
+    let url;
+    try { url = new URL(src, link).href; } catch { return null; }
+    for (const via of [url, INTERMEDIARIO + encodeURIComponent(url)]) {
+      try {
+        const resp = await buscarComPrazo(via, via === url ? 10 : 30);
+        const tipo = resp.headers.get("content-type") || "";
+        if (tipo.includes("text/html")) continue;
+        const dados = await resp.arrayBuffer();
+        if (dados.byteLength > 0) return { src, url, dados };
+      } catch { /* tenta o próximo caminho */ }
+    }
+    return null;
+  };
+  const figuras = [];
+  for (let i = 0; i < fontes.length; i += 4) {
+    const lote = await Promise.all(fontes.slice(i, i + 4).map(baixar));
+    figuras.push(...lote.filter(Boolean));
+  }
+  return { figuras, total: fontes.length };
+}
+
+async function analisarDou(entrada) {
+  let dados = null;
+  let nome = "pagina_dou.html";
+  let figuras = [];
+  let total = 0;
+  if (entrada.pagina) {
+    nome = entrada.pagina.name;
+    dados = await entrada.pagina.arrayBuffer();
+  } else {
+    let html = null;
+    try {
+      definirMotor("carregando", "Lendo o DOU");
+      html = await lerPaginaPeloLink(entrada.link);
+      if (html) {
+        definirMotor("carregando", "Baixando as figuras");
+        ({ figuras, total } = await figurasPeloLink(html, entrada.link));
+      }
+    } finally {
+      definirMotor(est.motorPronto ? "pronto" : "carregando", est.motorPronto ? "Pronto" : "Carregando");
+    }
+    if (!html) {
+      return { ok: false, erro: "Não consegui ler a página pelo link (o DOU ou o intermediário não responderam). Clique em " +
+        "Abrir no DOU, aperte Ctrl+S na página do ato, salve como “Página da Web, arquivo único” (.mhtml) e arraste o " +
+        "arquivo para o passo 1." };
+    }
+    dados = new TextEncoder().encode(html).buffer;
+  }
+  try {
+    const r = await executar("analisarPagina", { pagina: dados, nome, link: entrada.link, figuras, peloLink: !entrada.pagina },
+      [dados, ...figuras.map((f) => f.dados)]);
+    if (r && r.ok && total > figuras.length) r.figurasFaltando = total - figuras.length;
+    return r;
+  } catch (e) {
+    return { ok: false, erro: e.message };
+  }
 }
 
 async function analisar() {
@@ -205,7 +380,8 @@ async function analisar() {
       return { ok: false, erro: e.message };
     }
   };
-  let r = await pedirAnalise(0);
+  let r = entrada.origem === "dou" ? await analisarDou(entrada) : await pedirAnalise(0);
+  est.ocupado = false;   // a leitura do link pode falhar antes de chegar ao motor
   if (r.ok && r.escolher) {               // dois ou mais atos com o mesmo número: pergunta qual (3.20)
     const ocorrencia = await escolherAto(r);
     if (!ocorrencia) {
@@ -222,7 +398,8 @@ async function analisar() {
   if (!r.ok) {
     est.analise = null;
     est.analisado = null;
-    $("analisar-erro").replaceChildren(caixaErro("Não foi possível analisar o PDF", r.erro));
+    $("analisar-erro").replaceChildren(caixaErro(entrada.origem === "dou" ? "Não foi possível importar a página do DOU"
+      : "Não foi possível analisar o PDF", r.erro));
     desenharPrevia();
     atualizar();
     return;
@@ -235,6 +412,13 @@ async function analisar() {
   est.selCel = null;
   est.aba = "texto";
   $("op-municipios").checked = r.municipios;
+  if (r.figurasFaltando) {
+    const n = r.figurasFaltando;
+    $("analisar-erro").replaceChildren(h("div", { class: "erro-caixa aviso", role: "status" },
+      h("strong", {}, n === 1 ? "Uma figura não veio" : `${n} figuras não vieram`),
+      "O DOU não entregou " + (n === 1 ? "essa figura" : "essas figuras") + "; no Word sai a marca [FIGURA DO ATO] no lugar. " +
+      "Para trazê-las, salve a página do ato como “Página da Web, arquivo único” (.mhtml) e arraste o arquivo para o passo 1."));
+  }
   desenharPrevia();
   atualizar();
   $("previa").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -296,7 +480,7 @@ function pendenciasParaGerar(a) {
   const lista = [];
   for (const b of a.bloqueios) lista.push(`Bloqueio: ${b}`);
   const erros = errosPorTabela(a);
-  for (const [t] of erros) lista.push(`Conferir a tabela ${t + 1} no PDF`);
+  for (const [t] of erros) lista.push(`Conferir a tabela ${t + 1} ${fonte(a).no}`);
   if (a.limites.length && !a.limites_conferidos) lista.push("Conferir o início e o fim do ato");
   return lista;
 }
@@ -306,7 +490,8 @@ function desenharConferencia() {
   const a = est.analise;
   $("passo-conferir").setAttribute("aria-disabled", a ? "false" : "true");
   if (!a) {
-    lista.replaceChildren(h("li", {}, "Analise o PDF para ver o que precisa de conferência."));
+    lista.replaceChildren(h("li", {}, est.origem === "dou" ? "Importe a página do DOU para ver o que precisa de conferência."
+      : "Analise o PDF para ver o que precisa de conferência."));
     return;
   }
   const itens = [];
@@ -322,7 +507,8 @@ function desenharConferencia() {
     itens.push(h("li", { class: "ok" }, "Início e fim do ato conferidos"));
   } else {
     itens.push(h("li", {}, "Início e fim do ato sem alertas",
-      h("span", { class: "det" }, `Páginas ${a.paginas.join(", ")} do PDF.`)));
+      h("span", { class: "det" }, a.origem === "dou" ? `Página do ato no DOU${a.paginas.length ? ` (p. ${a.paginas.join(", ")})` : ""}.`
+        : `Páginas ${a.paginas.join(", ")} do PDF.`)));
   }
   const erros = errosPorTabela(a);
   if (!a.tabelas.length) itens.push(h("li", {}, "Nenhuma tabela neste ato"));
@@ -332,14 +518,14 @@ function desenharConferencia() {
         h("span", { class: "det" }, erros.get(t.i)),
         h("button", { class: "botao", type: "button", onclick: () => irParaTabela(t.i) }, "Abrir a tabela")));
     } else {
-      itens.push(h("li", { class: "ok" }, `Tabela ${t.i + 1} ${t.conferida ? "conferida por você" : "sem divergência com o PDF"}`));
+      itens.push(h("li", { class: "ok" }, `Tabela ${t.i + 1} ${t.conferida ? "conferida por você" : `sem divergência com ${fonte(a).o}`}`));
     }
   }
   const atencao = a.paragrafos.filter((p) => p.atencao.length);
   if (atencao.length) {
     itens.push(h("li", { class: "pendente" },
       h("strong", {}, `${atencao.length} ${atencao.length === 1 ? "trecho marcado" : "trechos marcados"} em amarelo`),
-      h("span", { class: "det" }, "Não impedem o Word, mas confira-os no PDF."),
+      h("span", { class: "det" }, `Não impedem o Word, mas confira-os ${fonte(a).no}.`),
       h("button", { class: "botao", type: "button", onclick: () => irParaParagrafo(atencao[0].i) }, "Ir para o primeiro")));
   }
   lista.replaceChildren(...itens);
@@ -359,8 +545,10 @@ function confirmar(texto, sim = "Sim, conferi", nao = "Ainda não") {
 }
 
 async function conferirLimites() {
-  const ok = await confirmar("Você conferiu no PDF que o título e todas as páginas do ato foram incluídos, " +
-    "até sua assinatura, protocolo ou início do ato seguinte?");
+  const ok = await confirmar(est.analise && est.analise.origem === "dou"
+    ? "Você conferiu na página do DOU que o título e todo o texto do ato foram incluídos, até a assinatura?"
+    : "Você conferiu no PDF que o título e todas as páginas do ato foram incluídos, " +
+      "até sua assinatura, protocolo ou início do ato seguinte?");
   if (!ok) return;
   aplicarEstado(await executar("conferirLimites"));
 }
@@ -520,7 +708,7 @@ async function entregar(r) {
     restantes.length ? h("p", {}, `Ficaram em amarelo no Word: ${restantes.join("; ")}.`) : null,
     marcadosSemLink(r),
     r.aviso_links ? h("p", { class: "msg-link" }, r.aviso_links) : null,
-    h("p", {}, "Compare com o PDF antes de usar."),
+    h("p", {}, `Compare com ${fonte(est.analise).o} antes de usar.`),
     h("div", { class: "botoes" }, botoesDoResultado(r, nomeWord))),
     r.fora_do_site && r.fora_do_site.length ? h("p", { class: "dica" },
       `Sem link e sem destaque, porque esse tipo de ato não consta no site da SEFA: ${r.fora_do_site.join("; ")}.`) : null,
@@ -695,12 +883,15 @@ function desenharPrevia() {
       title: "Mostra o Word como ele será baixado",
       onclick: () => { est.aba = "word"; desenharPrevia(); } }, iconeOlho(), "Ver como no Word"));
   const resumo = h("div", { class: "resumo-previa" },
-    `${a.paginas.length > 1 ? "Páginas" : "Página"} ${a.paginas.join(", ")} do PDF` +
+    (a.origem === "dou" ? `Página do ato no DOU${a.paginas.length ? ` (p. ${a.paginas.join(", ")} do diário)` : ""}`
+      : `${a.paginas.length > 1 ? "Páginas" : "Página"} ${a.paginas.join(", ")} do PDF`) +
     (a.valores ? ` · ${a.valores} valores monetários lidos nas tabelas` : ""));
   const folha = h("div", { class: est.aba === "word" ? "folha vista" : "folha", role: "tabpanel" });
   if (est.avisoDesatualizado) {
     folha.append(h("div", { class: "aviso-folha bloqueio" },
-      "Você mudou o PDF, o número do ato ou o limite de páginas. Clique em Analisar PDF de novo para atualizar a prévia."));
+      a.origem === "dou" || est.origem === "dou"
+        ? "Você mudou a origem do ato ou a página do DOU. Clique em Importar de novo para atualizar a prévia."
+        : "Você mudou o PDF, o número do ato ou o limite de páginas. Clique em Analisar PDF de novo para atualizar a prévia."));
   }
   if (est.aba === "texto") desenharTexto(folha, a);
   else if (est.aba === "tabelas") desenharTabelas(folha, a);
@@ -715,7 +906,7 @@ function desenharTexto(folha, a) {
   const erros = errosPorTabela(a);
   for (const [tipo, indice, pagina] of a.ordem) {
     if (pagina !== paginaAnterior) {
-      folha.append(h("div", { class: "sep-pagina" }, `página ${pagina} do PDF`));
+      folha.append(h("div", { class: "sep-pagina" }, a.origem === "dou" ? "página do ato no DOU" : `página ${pagina} do PDF`));
       paginaAnterior = pagina;
     }
     if (tipo === "t") {
@@ -732,8 +923,14 @@ function desenharTexto(folha, a) {
       continue;
     }
     if (tipo === "img") {
-      folha.append(h("div", { class: "marcador" }, h("span", { class: "margem" }, "imagem"),
-        h("div", { class: "cartao" }, "Brasão do anexo, copiado do PDF para o Word")));
+      const im = (a.imagens || [])[indice] || {};
+      folha.append(h("div", { class: "marcador" }, h("span", { class: "margem" }, im.conteudo ? "figura" : "imagem"),
+        h("div", { class: "cartao" },
+          im.conteudo ? `Trecho publicado como imagem (fórmula ou figura), copiado ${fonte(a).do} para o Word. ` +
+            "Se quiser o texto, digite-o no Word a partir da imagem."
+            : `Brasão do anexo, copiado ${fonte(a).do} para o Word`,
+          im.conteudo && im.src ? h("img", { class: "figura-ato", src: im.src, alt: "Figura do ato",
+            style: im.largura ? `width:${Math.min(100, im.largura / 4.5).toFixed(0)}%` : null }) : null)));
       continue;
     }
     const p = a.paragrafos[indice];
@@ -793,7 +990,8 @@ function desenharTabelas(folha, a) {
     const bloco = h("section", { class: "bloco-tabela", id: `tabela-${t.i}` },
       h("header", {},
         h("h3", {}, `Tabela ${t.i + 1}`),
-        h("span", { class: "onde" }, `${t.paginas.length > 1 ? "páginas" : "página"} ${t.paginas.join(", ")} do PDF`),
+        h("span", { class: "onde" }, a.origem === "dou" ? "página do ato no DOU"
+          : `${t.paginas.length > 1 ? "páginas" : "página"} ${t.paginas.join(", ")} do PDF`),
         h("span", { class: `selo ${pendente ? "pendente" : "ok"}` },
           pendente ? "Precisa de conferência" : t.conferida ? "Conferida por você" : "Sem divergência")));
     if (pendente) bloco.append(h("ul", { class: "problemas" }, erros.get(t.i).split("; ").map((x) => h("li", {}, x))));
@@ -811,9 +1009,11 @@ function desenharTabelas(folha, a) {
     });
     bloco.append(h("div", { class: "rolagem" }, tabela));
     bloco.append(h("div", { class: "acoes-tabela" },
-      h("button", { class: "botao", type: "button", onclick: () => verNoPdf(t.i, 0), disabled: est.ocupado }, "Ver no PDF"),
+      a.origem === "dou"
+        ? (a.url ? h("button", { class: "botao", type: "button", onclick: () => window.open(a.url, "_blank", "noopener") }, "Ver ato no DOU") : null)
+        : h("button", { class: "botao", type: "button", onclick: () => verNoPdf(t.i, 0), disabled: est.ocupado }, "Ver no PDF"),
       pendente ? h("button", { class: "botao principal", type: "button", onclick: () => conferirTabela(t.i), disabled: est.ocupado },
-        "Conferi a tabela no PDF") : null));
+        `Conferi a tabela ${fonte(a).no}`) : null));
     if (est.selCel && est.selCel.t === t.i) bloco.append(editorCelula(t));
     folha.append(bloco);
   }
@@ -837,9 +1037,10 @@ function editorCelula(t) {
         const res = await executar("editarCelula", { tabela: t.i, linha: r, coluna: c, texto: area.value });
         aplicarEstado(res);
       } }, "Aplicar correção"),
-      h("button", { class: "botao", type: "button", onclick: () => verNoPdf(t.i, r), disabled: est.ocupado }, "Ver esta linha no PDF"),
+      est.analise && est.analise.origem === "dou" ? null
+        : h("button", { class: "botao", type: "button", onclick: () => verNoPdf(t.i, r), disabled: est.ocupado }, "Ver esta linha no PDF"),
       h("button", { class: "botao", type: "button", onclick: fechar }, "Cancelar")),
-    h("p", { class: "dica" }, "Depois de corrigir uma célula, confira a tabela inteira no PDF de novo."));
+    h("p", { class: "dica" }, `Depois de corrigir uma célula, confira a tabela inteira ${fonte().no} de novo.`));
 }
 
 async function verNoPdf(t, linha) {
@@ -853,7 +1054,7 @@ async function verNoPdf(t, linha) {
 }
 
 async function conferirTabela(t) {
-  const ok = await confirmar(`Você comparou cada rótulo e cada valor da tabela ${t + 1} com o PDF original? ` +
+  const ok = await confirmar(`Você comparou cada rótulo e cada valor da tabela ${t + 1} com ${fonte().o} original? ` +
     "Diferenças automáticas serão aceitas após sua conferência; a revisão ficará registrada no relatório, se for gerado.");
   if (!ok) return;
   aplicarEstado(await executar("conferirTabela", { tabela: t }));
@@ -1512,8 +1713,9 @@ window.addEventListener("beforeunload", (e) => {
 /* ---------------- estado dos botões ---------------- */
 function atualizar() {
   const entrada = entradaAtual();
-  $("analisar").disabled = !est.motorPronto || est.ocupado || !entrada.pdf || !entrada.consulta;
-  $("analisar").textContent = est.ocupado ? "Processando…" : "Analisar PDF";
+  const pronta = entrada.origem === "dou" ? !!(entrada.pagina || LINK_DOU.test(entrada.link)) : !!(entrada.pdf && entrada.consulta);
+  $("analisar").disabled = !est.motorPronto || est.ocupado || !pronta;
+  $("analisar").textContent = est.ocupado ? "Processando…" : entrada.origem === "dou" ? "Importar a página do DOU" : "Analisar PDF";
   desenharConferencia();
   const a = est.analise;
   if (a && analiseDesatualizada() !== est.avisoDesatualizado) desenharPrevia();
@@ -1522,7 +1724,8 @@ function atualizar() {
   let lista = [];
   if (a) {
     lista = pendenciasParaGerar(a);
-    if (analiseDesatualizada()) lista.unshift("Analisar o PDF de novo (o PDF ou o número do ato mudou)");
+    if (analiseDesatualizada()) lista.unshift(est.origem === "dou" || a.origem === "dou"
+      ? "Importar de novo (a origem ou a página do DOU mudou)" : "Analisar o PDF de novo (o PDF ou o número do ato mudou)");
   }
   $("gerar").disabled = !a || est.ocupado || lista.length > 0;
   $("editar").disabled = $("gerar").disabled;
@@ -1538,4 +1741,5 @@ function atualizar() {
 }
 
 desenharLinksSalvos();
+try { if (localStorage.getItem("formatador-sefa:origem") === "dou") mudarOrigem("dou"); } catch { /* sem armazenamento */ }
 atualizar();

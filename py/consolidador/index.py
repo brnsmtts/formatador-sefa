@@ -6,6 +6,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from .model import Target, norm
+from .headings import HEADING_NOTE
 
 
 NUM = r"(\d+)(?:[º°o])?(?:[-–]([A-Z]{1,3})(?![A-Za-zÀ-ÿ]))?"
@@ -17,6 +18,9 @@ ALINEA = re.compile(r"^([a-z])\s*\)\s*")
 ITEM = re.compile(r"^(\d+(?:\.\d+)*)\s*[.)]\s+")
 HEADING = re.compile(r"^(?:T[IÍ]TULO|CAP[IÍ]TULO|SE[CÇ][AÃ]O|SUBSE[CÇ][AÃ]O|LIVRO|PARTE)\b", re.I)
 HIST_TEXT = re.compile(r"^Reda[cç][aã]o\s+(?:original|anterior)\b", re.I)
+# Fecho do ato ("Brasília, 5 de outubro de 1988.", "PALÁCIO DO GOVERNO, 13 de janeiro de 1989."):
+# encerra o último dispositivo, para que um artigo acrescido fique antes da assinatura.
+SIGNATURE_LINE = re.compile(r"^(?:pal[aá]cio|bras[ií]lia|bel[eé]m|gabinete|sala\s+das\s+sess[oõ]es)\b[^.;]{0,90}?,\s*(?:em\s+)?\d{1,2}[º°]?\s+de\s+[a-zç]+\s+de\s+\d{4}", re.I)
 NOTE_TEXT = re.compile(r"^(?:Reda[cç][aã]o\s+dada|Acrescid[oa]s?|Revogad[oa]s?|Renumerad[oa]s?|Vide\b)", re.I)
 
 
@@ -210,11 +214,19 @@ class Legislation:
                     if corpus not in self.corpora:
                         self.corpora.append(corpus)
                 if r in ("heading", "outside"):
-                    boundaries.append(i)
+                    # A nota de um título ("Redação dada ao título da Seção V ...") fica
+                    # com o título, e não no fim do artigo anterior.
+                    start = i
+                    while start > 0 and self.blocks[start - 1].role == "new_note" and HEADING_NOTE.match(self.blocks[start - 1].text):
+                        start -= 1
+                    boundaries.append(start)
                     # Só a assinatura encerra o articulado. Um estilo de
                     # ementa/epígrafe usado no meio da lei não pode truncá-la.
                     if r == "outside" and self.nodes and any(s in norm(style_name) for s in ("autoridade", "cargo")):
                         outside = True
+                    continue
+                if r == "current" and self.nodes and SIGNATURE_LINE.match(text):
+                    boundaries.append(i)
                     continue
                 if r != "current" or outside:
                     continue
@@ -284,11 +296,14 @@ class Legislation:
 
 def identify(text):
     n = norm(text)
-    if "constituicao" in n[:160] and ("estadual" in n[:160] or "para" in n[:160]):
-        return "CONSTITUICAO_ESTADUAL"
-    if "constituicao" in n[:160] and ("federativa" in n[:160] or "federal" in n[:160]):
-        return "CONSTITUICAO_FEDERAL"
-    m = re.search(r"\b(lei\s+complementar|lei|decreto(?:\s+legislativo)?|portaria(?:\s+conjunta)?|instrucao\s+normativa|resolucao|emenda\s+constitucional)\s*(?:n\s*[o.]?\s*)?([\d.]+)", n)
+    head = n[:160]
+    if "constituicao" in head:
+        # "para" também é preposição ("reunidos ... para instituir") e começo de "parágrafo".
+        if re.search(r"\b(?:federativa|republica|federal)\b", head):
+            return "CONSTITUICAO_FEDERAL"
+        if re.search(r"\bestadual\b|\bestado do para\b|\bdo para\b", head):
+            return "CONSTITUICAO_ESTADUAL"
+    m = re.search(r"\b(lei\s+complementar|lei|decreto(?:\s+legislativo)?|portaria(?:\s+conjunta)?|instrucao\s+normativa|resolucao|emenda\s+constitucional)\s*(?:n\s*[o.]?\s*)?(\d[\d.]*)", n)
     if m:
         return m[1].upper().replace(" ", "_") + ":" + m[2].replace(".", "")
     return ""

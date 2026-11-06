@@ -12,6 +12,7 @@ import html
 import io
 import os
 import re
+import statistics
 import tempfile
 import unicodedata
 from collections import Counter
@@ -42,7 +43,7 @@ MONEY = re.compile(r"(?<!\d)-?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}(?![\d%])")
 PREFIXED_CURRENCY = re.compile(r"R\$\s*(-?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{2})?)")
 PERCENT = re.compile(r"-?\d+(?:\.\d{3})*,\d+(?:\s*%)")
 NUMERIC_CELL = re.compile(r"\s*(?:R\$\s*)?-?\d[\d.,]*(?:\s*%)?\s*")
-ROW_START = re.compile(r"^(?:\d+(?:\.\d+)*\s*[-–.]|[IVXLCDM]+\s*[-–]|TOTAIS\b)", re.I)
+ROW_START = re.compile(r"^(?:\d+(?:\.\d+)*\s*(?:[-–]|\.(?!\d))|[IVXLCDM]+\s*[-–]|TOTAIS\b)", re.I)
 FOOTNOTE = re.compile(r"^[¹²³⁴⁵⁶⁷⁸⁹]")
 PROTOCOL = re.compile(r"^PROTOCOLO\s*:\s*\d+", re.I)
 SECTION_HEAD = re.compile(r"^ATOS\s+(?:DO|DA|DOS|DAS)\b", re.I)
@@ -75,6 +76,7 @@ class ImageBlock:
     data: bytes
     page: int
     kind: str = "image"
+    width: float = 0.0        # em pontos; 0 = brasão/logotipo (largura fixa)
 
 
 @dataclass
@@ -120,6 +122,7 @@ class Extraction:
     intertable_segments_checked: int = 0
     # Citação aberta no fim de uma coluna ou página continua na região seguinte (3.24).
     quote_state: dict = field(default_factory=dict)
+    source_url: str = ""          # importação pelo link do DOU (sem PDF)
 
     @property
     def tables(self) -> list[TableBlock]:
@@ -173,18 +176,159 @@ def pdf_lines(pdf_path: Path, page_number: int, document: Any | None = None) -> 
         with fitz.open(str(pdf_path)) as pdf:
             return pdf_lines(pdf_path, page_number, pdf)
     page = document[page_number - 1]
+    raw = page.get_text("rawdict")["blocks"]
+    widths = _glyph_widths(raw)
     lines = []
-    for block in page.get_text("dict")["blocks"]:
+    for block in raw:
         if block["type"] != 0:
             continue
         for line in block["lines"]:
-            value = re.sub(r"\s+", " ", "".join(span["text"] for span in line["spans"])).strip()
+            spans = [(_span_text(span, widths), span) for span in line["spans"]
+                     if span["size"] >= HIDDEN_SIZE and not _white_dots(span)]
+            value = re.sub(r"\s+", " ", "".join(text for text, _ in spans)).strip()
             if value:
                 x0, top, x1, bottom = line["bbox"]
                 lines.append({"text": value, "x0": x0, "top": top,
                               "x1": x1, "bottom": bottom,
-                              "spans": [(span["text"], span_marks(span)) for span in line["spans"] if span["text"]]})
+                              "spans": [(text, span_marks(span)) for text, span in spans if text]})
     return sorted(lines, key=lambda l: (l["top"], l["x0"]))
+
+
+# Texto invisível: no DOE de 21.10.2026 há um "GABINETE DO GOVERNADOR" branco, em corpo 0,1, que entrava no
+# começo da Lei nº 11.672. Nada abaixo de 1,5 pt é legível.
+HIDDEN_SIZE = 1.5
+
+
+def _white_dots(span: dict) -> bool:
+    """Pontos impressos em branco, invisíveis na página: no DOU de 26.10.2026 cercam cada célula das tabelas do
+    Ato Técnico Conjunto RFB/CGIBS nº 9 (".José Guilherme ... .", ".DIREX"). Texto branco com letras fica (títulos
+    brancos sobre faixa preta, como no DOE)."""
+    text = "".join(char["c"] for char in span.get("chars", ())) or span.get("text", "")
+    return span.get("color") == 0xFFFFFF and bool(text.strip()) and not text.strip(". ")
+
+
+def _invisible_char(obj: dict) -> bool:
+    """O mesmo para as letras lidas pelo pdfplumber (células das tabelas)."""
+    if obj.get("object_type") != "char":
+        return False
+    if obj.get("size", 9) < HIDDEN_SIZE:
+        return True
+    color = obj.get("non_stroking_color")
+    values = tuple(color) if isinstance(color, (list, tuple)) else (color,)
+    white = values in ((1,), (1.0,), (1, 1, 1), (1.0, 1.0, 1.0), (0, 0, 0, 0), (0.0, 0.0, 0.0, 0.0))
+    return white and obj.get("text") == "."
+
+
+def _phantom_space(previous: Any, char: Any, following: Any,
+                   box: Any = lambda c: (c["x0"], c["top"], c["x1"])) -> bool:
+    """Espaço sem largura visível: a letra seguinte começa onde a anterior termina, por cima do espaço. Nas
+    tabelas do Anexo I do Ato Técnico Conjunto RFB/CGIBS nº 9 (DOU de 26.10.2026, p. 36-37), o PDF guarda
+    "R E P R ES E N T AÇ ÃO", "Ko u r y" e "Fo c a l", mas a página mostra "REPRESENTAÇÃO", "Koury" e "Focal"; o
+    mesmo diário tem "D EC I S Õ ES" e "Fe d e r a l". Espaço estreito mas visível (texto justificado do DOE, a
+    partir de 0,4 pt entre as letras) continua."""
+    if previous is None or following is None:
+        return False
+    x0, top, x1 = box(char)
+    _, previous_top, previous_x1 = box(previous)
+    next_x0, next_top, _ = box(following)
+    return (abs(top - next_top) < .5 and abs(top - previous_top) < .5
+            and x0 - 1 <= next_x0 < x0 + .5 * (x1 - x0) and next_x0 - previous_x1 < .2)
+
+
+def visible_page(page: Any) -> Any:
+    chars = page.chars
+    phantom = {id(char) for previous, char, following in zip(chars, chars[1:], chars[2:])
+               if char["text"] == " " and previous["text"] != " " and following["text"] != " "
+               and _phantom_space(previous, char, following)}
+    return page.filter(lambda obj: id(obj) not in phantom and not _invisible_char(obj))
+
+
+def open_top_settings(page: Any) -> dict:
+    """Borda de cima que falta numa tabela: a continuação da tabela do GTI 7 no alto da coluna direita (DOU de
+    26.10.2026, p. 36) começa sem linha horizontal, e a primeira linha ("José Guilherme de Souza Moitta Koury |
+    | DIREX") ficava fora. Quando duas ou mais verticais começam na mesma altura, sem horizontal ali, e há uma
+    horizontal logo abaixo cobrindo as mesmas verticais, acrescenta-se a borda que falta."""
+    edges = page.edges
+    horizontals = [e for e in edges if e["orientation"] == "h"]
+    groups: dict[int, list[dict]] = {}
+    for edge in edges:
+        if edge["orientation"] == "v":
+            groups.setdefault(round(edge["top"]), []).append(edge)
+    lines = []
+    for top, verticals in groups.items():
+        if len(verticals) < 2:
+            continue
+        left, right = min(v["x0"] for v in verticals), max(v["x0"] for v in verticals)
+        if right - left < 50:
+            continue
+        def covers(h: dict) -> bool:
+            return h["x0"] <= left + 2 and h["x1"] >= right - 2
+        # já há horizontal nessa altura, ainda que só em parte (o "Ad valorem (%)" que cobre "Inicial | Fator de
+        # conversão | Final" no cabeçalho do Anexo IV da MP nº 1.399): é divisão do cabeçalho, não borda que falta
+        if any(abs(h["top"] - top) <= 2 and h["x1"] > left + 2 and h["x0"] < right - 2 for h in horizontals):
+            continue
+        # cada vertical desce até uma horizontal da tabela (não são traços do logotipo do cabeçalho do DOU); a
+        # primeira linha pode ser alta: "Bebidas alcoólicas das seguintes posições ..." tem 70 pt (Anexo IV da
+        # MP nº 1.399, DOU de 04.11.2026, edição extra B, p. 3)
+        below = [h for h in horizontals if 0 < h["top"] - top <= 200 and covers(h)]
+        if not below or not all(v["bottom"] - v["top"] >= 6 and any(abs(v["bottom"] - h["top"]) <= 2 for h in below)
+                                for v in verticals):
+            continue
+        top = min(v["top"] for v in verticals)
+        lines.append({"object_type": "line", "x0": left, "x1": right, "top": top, "bottom": top,
+                      "width": right - left, "height": 0, "orientation": "h",
+                      "pts": [(left, top), (right, top)], "doctop": top + getattr(page, "initial_doctop", 0)})
+    return {"explicit_horizontal_lines": lines} if lines else {}
+
+
+def _glyph_widths(blocks: list[dict]) -> dict[tuple[str, float, str], float]:
+    """Largura mediana de cada letra na página, por fonte e corpo."""
+    samples: dict[tuple[str, float, str], list[float]] = {}
+    for block in blocks:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                key = (span["font"], round(span["size"], 1))
+                for char in span["chars"]:
+                    if char["c"].isalpha():
+                        samples.setdefault(key + (char["c"],), []).append(char["bbox"][2] - char["bbox"][0])
+    return {key: statistics.median(values) for key, values in samples.items() if len(values) >= 2}
+
+
+def _span_text(span: dict, widths: dict[tuple[str, float, str], float]) -> str:
+    """Texto do trecho com a caixa que aparece na página. Em versalete (DOE de 21.10.2026), o PDF desenha
+    maiúsculas mas guarda o que foi digitado: "A AssemblEia Legislativa do Estado do Pará estatui ..." aparece
+    como "A ASSEMBLEIA LEGISLATIVA DO ESTADO DO PARÁ estatui ...". A palavra só passa a maiúsculas quando todas
+    as suas minúsculas têm a largura da maiúscula correspondente e pelo menos duas delas têm larguras bem
+    diferentes nas duas caixas ("s": 3,65 x 4,79 pt) - espaçamento de justificação não produz isso."""
+    fitz_box = lambda c: (c["bbox"][0], c["bbox"][1], c["bbox"][2])  # noqa: E731
+    raw = span["chars"]
+    chars = [char for index, char in enumerate(raw)
+             if not (char["c"] == " " and 0 < index < len(raw) - 1 and raw[index - 1]["c"] != " "
+                     and raw[index + 1]["c"] != " " and _phantom_space(raw[index - 1], char, raw[index + 1], fitz_box))]
+    text = "".join(char["c"] for char in chars)
+    key = (span["font"], round(span["size"], 1))
+    pieces, start = [], 0
+    for word in re.finditer(r"[^\W\d_]+", text):
+        letters = chars[word.start():word.end()]
+        lower = [c for c in letters if c["c"].islower() and c["c"].upper() != c["c"]]
+        if lower:
+            matches, strong = True, 0
+            for char in lower:
+                small, capital = widths.get(key + (char["c"],)), widths.get(key + (char["c"].upper(),))
+                width = char["bbox"][2] - char["bbox"][0]
+                if small is not None and abs(width - small) <= .2:
+                    matches = False              # largura de minúscula: a letra aparece minúscula
+                    break
+                if capital is not None:
+                    if abs(width - capital) > .2:
+                        matches = False
+                        break
+                    strong += small is not None and abs(capital - small) >= .5
+                # sem maiúscula dessa letra na página ("T", "Á"): basta não ter a largura da minúscula
+            if matches and strong >= 2:
+                pieces.append(text[start:word.start()] + word.group(0).upper())
+                start = word.end()
+    return "".join(pieces) + text[start:]
 
 
 def fix_char_case(page: Any, fitz_page: Any, positions: list[tuple[float, float]] | None = None) -> int:
@@ -237,8 +381,17 @@ def words_inside(words: list[dict], box: tuple[float, float, float, float]) -> l
 def cell_lines(words: list[dict], box: tuple[float, float, float, float], concatenate: bool = False) -> list[tuple[float, str]]:
     lines = []
     for top, members in grouped_words(words_inside(words, box)):
-        tokens = [w["text"] for w in sorted(members, key=lambda w: w["x0"])]
-        lines.append((top, ("" if concatenate else " ").join(tokens)))
+        ordered = sorted(members, key=lambda w: w["x0"])
+        if not concatenate:
+            lines.append((top, " ".join(w["text"] for w in ordered)))
+            continue
+        # junta só os pedaços de um mesmo número ("1 .234,56"); um espaço de verdade continua espaço, ou
+        # "24.01, 24.02, 24.03" vira "24.01,24.02" e a conferência acha o valor "01,24" (MP nº 1.399, Anexo IV)
+        text = ordered[0]["text"] if ordered else ""
+        for previous, word in zip(ordered, ordered[1:]):
+            gap = word["x0"] - previous["x1"]
+            text += ("" if gap < .25 * (previous["bottom"] - previous["top"]) else " ") + word["text"]
+        lines.append((top, text))
     return lines
 
 
@@ -263,8 +416,13 @@ def extract_table(page: Any, table: Any, words: list[dict], page_number: int) ->
         boxes = geometry.cells
         first = boxes[0]
         if first is None:
+            # segunda linha do cabeçalho, embaixo de "Descrição" mesclada em duas linhas e sem números acima
+            # ("Descrição | Ad valorem (%) | Específica (R$)" / "Inicial | Fator de conversão | Final", MP nº 1.399)
+            header_row = row_index <= 2 and not monetary_values(
+                [[cell or "" for cell in extracted[index]] for index in range(row_index)])
             if any(extracted[row_index]):
-                issues.append(f"Linha {row_index + 1} com célula mesclada: confirme cabeçalho e colunas no PDF.")
+                if not header_row:
+                    issues.append(f"Linha {row_index + 1} com célula mesclada: confirme cabeçalho e colunas no PDF.")
                 output_map.append([len(rows)])
                 rows.append([cell or "" for cell in extracted[row_index]])
             else:
@@ -356,7 +514,15 @@ def extract_table(page: Any, table: Any, words: list[dict], page_number: int) ->
     widths = [min((row.cells[ci][2] - row.cells[ci][0]
                    for row in table.rows if row.cells[ci]), default=30.0)
               for ci in range(len(column_geometry))]
-    source = character_signature("".join(word["text"] for word in words_inside(words, table.bbox)))
+    if isinstance(table, TextTable) or not hasattr(table, "page"):
+        source = character_signature("".join(word["text"] for word in words_inside(words, table.bbox)))
+    else:
+        # letras com o centro dentro da tabela, como em Table.extract: "CCE/FC" + "E" que passa da borda da
+        # célula (Portaria MME nº 943, DOU de 26.10.2026) não conta como texto perdido
+        x0, top, x1, bottom = table.bbox
+        source = character_signature("".join(
+            char["text"] for char in table.page.chars
+            if x0 <= (char["x0"] + char["x1"]) / 2 < x1 and top <= (char["top"] + char["bottom"]) / 2 < bottom))
     if matrix_signature(rows) != source:
         issues.append("Parte do texto da tabela no PDF não corresponde às células extraídas; confira todas as células.")
     strategy = getattr(table, "strategy", "linhas")
@@ -384,10 +550,15 @@ def dou_margins(lines: list[dict], page_height: float) -> tuple[float, float]:
     """Faixa útil de uma página do DOU: abaixo do cabeçalho (ISSN, "Ano CLXIV Nº 186-A", "Brasília - DF, ...",
     número da página) e acima do expediente ("PRESIDÊNCIA DA REPÚBLICA • CASA CIVIL ...") e do rodapé de
     autenticação. Sem essas linhas, devolve a página inteira."""
+    def page_number(line: dict) -> bool:
+        # O número da página fica sozinho na sua altura; "81" na primeira coluna de uma linha de tabela, não
+        # (Portaria MPA nº 778, DOU de 26.10.2026, p. 65: a tabela perdia a última linha e saía do Word)
+        return bool(re.fullmatch(r"\d{1,4}", line["text"].strip())) and not any(
+            other is not line and abs(other["top"] - line["top"]) < 1 for other in lines)
     header = [l["bottom"] for l in lines if l["top"] < page_height * .15 and DOU_HEADER.match(l["text"].strip())]
-    header += [l["bottom"] for l in lines if l["top"] < page_height * .085 and re.fullmatch(r"\d{1,4}", l["text"].strip())]
+    header += [l["bottom"] for l in lines if l["top"] < page_height * .085 and page_number(l)]
     footer = [l["top"] for l in lines if l["top"] > page_height * .5 and DOU_FOOTER.search(l["text"])]
-    footer += [l["top"] for l in lines if l["top"] > page_height * .92 and re.fullmatch(r"\d{1,4}", l["text"].strip())]
+    footer += [l["top"] for l in lines if l["top"] > page_height * .92 and page_number(l)]
     return (max(header) + .5 if header else 0.0), (min(footer) - 1 if footer else page_height)
 
 
@@ -421,7 +592,10 @@ def three_columns(lines: list[dict], width: float) -> bool:
     return min(counts) >= 8
 
 
-PLACE_DATE = re.compile(r"^[^,;:]+,\s*\d{1,2}[º°]?\s+de\s+\w+\s+de\s+\d{4}\.?$", re.I)
+# "Belém, 1º de outubro de 2026." e, no DOU, "Brasília, 4 de novembro de 2026; 205º da Independência e 138º da
+# República."
+PLACE_DATE = re.compile(r"^[^,;:]+,\s*\d{1,2}[º°]?\s+de\s+\w+\s+de\s+\d{4}"
+                        r"(?:;\s*\d+[º°]\s+da\s+Independ[eê]ncia\s+e\s+\d+[º°]\s+da\s+Rep[uú]blica)?\.?$", re.I)
 OPEN_ENDING = re.compile(r"(?:\b(?:de|da|do|das|dos|e|em)|[-,])\s*$", re.I)
 
 
@@ -434,6 +608,10 @@ def signature_break(paragraphs: list[str], text: str) -> bool:
     if (len(paragraphs) >= 2 and looks_like_signer_name(paragraphs[-2]) and SIGNER_CARGO.match(last)
             and len(last) <= 90 and not OPEN_ENDING.search(last) and looks_like_signer_name(text)):
         return True                                   # próximo signatário, depois de nome + cargo
+    if (len(paragraphs) >= 2 and looks_like_signer_name(last) and looks_like_signer_name(text)
+            and not text.isupper() and len(text) <= 60
+            and (PLACE_DATE.match(paragraphs[-2]) or looks_like_signer_name(paragraphs[-2]))):
+        return True       # DOU: "LUIZ INÁCIO LULA DA SILVA" / "Dario Carnevalli Durigan" (ministros, em itálico)
     return bool(PLACE_DATE.match(last) and looks_like_signer_name(text))   # "Belém, 1º de ... de 2026"
 
 
@@ -523,6 +701,39 @@ def merge_split_line(lines: list[dict]) -> list[dict]:
 # Texto alterado entre aspas: '"Art. 198. ......' depois de '.........." (NR)' abre parágrafo.
 QUOTED_LABEL = re.compile(r'^[“"]\s*(?:Art\.|ART\.|§|[IVXLCDM]+\s*[-–]|[a-z]\s*\)|\.{3,})')
 
+# Nome e cargo na mesma linha, separados por hífen: "DEPUTADO ADRIANO COELHO-  3º Secretário", "DEPUTADA CILENE
+# COUTO -  1ª Secretária" (Emenda Constitucional nº 102 e Decretos Legislativos, DOE de 21.10.2026). Saíam
+# grudados no cargo da assinatura anterior.
+DOUBLE_ROMAN = re.compile(r"^[IVXLCDM]+\s+[IVXLCDM]+\s*[-–]\s")
+NAME_DASH_CARGO = re.compile(r"^(?P<nome>[^\d,;:–-]{5,80}?)\s*[-–]\s+(?P<cargo>\S.{2,80})$")
+# Local e data com palavra partida no fim da linha: "PALÁCIO CABANAGEM, PLENÁRIO NEWTON MIRANDA, EM 15 DE SETEM-" /
+# "BRO DE 2026." (Decretos Legislativos, DOE de 21.10.2026). Sem palavra partida, as duas linhas ficam como no diário
+# (revisão da Emenda Constitucional nº 102/2026).
+PALACE = re.compile(r"^(?:PAL[AÁ]CIO|GABINETE|PLEN[AÁ]RIO)\b[^,]*,", re.I)
+
+
+def split_name_and_cargo(lines: list[dict]) -> list[dict]:
+    result = []
+    for line in lines:
+        found = NAME_DASH_CARGO.match(line["text"].strip())
+        if (found and looks_uppercase(found.group("nome")) and looks_like_person_name(found.group("nome").strip())
+                and SIGNER_CARGO.match(found.group("cargo"))
+                # "3º Secretário", "Secretária de Estado ...": o cargo tem minúsculas; "SERVIDORES REMOVIDOS – AUDITOR
+                # FISCAL DE RECEITAS ESTADUAIS – AFRE" (subtítulo da Portaria nº 522/2026-SEFA.GS) não é assinatura
+                and not looks_uppercase(found.group("cargo"))):
+            name, cargo = found.group("nome").strip(), found.group("cargo").strip()
+            middle = line["x0"] + (line["x1"] - line["x0"]) * len(name) / max(len(line["text"]), 1)
+            result.append({**line, "text": name, "x1": middle, "spans": [(name, _first_marks(line))], "standalone": True})
+            result.append({**line, "text": cargo, "x0": middle, "spans": [(cargo, _first_marks(line))],
+                           "standalone": True})
+        else:
+            result.append(line)
+    return result
+
+
+def _first_marks(line: dict) -> int:
+    return next((marks for text, marks in line.get("spans") or [] if text.strip()), 0)
+
 
 def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dict]] | None = None) -> list[str]:
     """Une somente quebras físicas curtas dentro do mesmo parágrafo. Com opinion (Solução de Consulta),
@@ -532,7 +743,7 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
     members: list[list[dict]] = []
     endings = ('.', ':', ';', '?', '!') if opinion else ('.', ':', ';')
     previous_bottom = 0.0
-    for line in merge_split_line(side_by_side_signatures(lines)):
+    for line in split_name_and_cargo(merge_split_line(side_by_side_signatures(lines))):
         text = line["text"].strip()
         if not text:
             continue
@@ -546,7 +757,14 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
                          or PREAMBLE.match(text) or COMMAND.match(text) or ARTICLE.match(text))
         if paragraphs and EPIGRAPH.match(paragraphs[-1]) and re.search(r"\b\d{4}\s*$", paragraphs[-1]):
             new_start = True
-        if CARGO.match(text) or NAME.fullmatch(text) or looks_uppercase(text):
+        # "... referente ao Processo Administrativo" / "63546/1996-ITERPA." (Decretos Legislativos, DOE de 21.10.2026):
+        # a linha que começa por algarismo só tem maiúsculas nas letras da sigla e continua a frase.
+        number_tail = bool(text[:1].isdigit() and paragraphs and not paragraphs[-1].rstrip().endswith(endings)
+                           and line["top"] - previous_bottom <= 6
+                           and not looks_uppercase(paragraphs[-1])    # título ou cabeçalho de tabela: não
+                           and bool(re.search(r"[^\W\d_]\s*$", paragraphs[-1]))    # "... Fonte: 0.1.500" / "339030_": não
+                           and len(re.findall(r"\d,\d{2}\b", text + " " + paragraphs[-1])) < 2)   # tabela de valores: não
+        if (CARGO.match(text) or NAME.fullmatch(text) or looks_uppercase(text)) and not number_tail:
             # Solução de Consulta: a ementa vem toda em maiúsculas, sem negrito; títulos e assinaturas
             # são os que estão em negrito. Ali a linha em maiúsculas sem negrito continua o parágrafo.
             marks = _line_marks(line)
@@ -555,7 +773,20 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
                 new_start = True
         if paragraphs and signature_break(paragraphs, text):
             new_start = True
+        close = bool(paragraphs) and line["top"] - previous_bottom <= 6
+        if (new_start and close and PREAMBLE.match(paragraphs[-1]) and not paragraphs[-1].rstrip().endswith(endings)
+                and not re.match(r"CONSIDERANDO\b", paragraphs[-1], re.I)   # "Considerando LAUDO PERICIAL" / "PROCESSO: ..."
+                and not any(rx.match(text) for rx in (EPIGRAPH, COMMAND, ARTICLE, PREAMBLE))
+                and not line.get("standalone")):
+            new_start = False     # "... estatui e sua Mesa" / "Diretora promulga ...": o cargo não abre parágrafo
+        if (new_start and close and PALACE.match(paragraphs[-1]) and paragraphs[-1].rstrip().endswith(("-", "\xad"))
+                and not looks_like_person_name(text) and not EPIGRAPH.match(text) and not line.get("standalone")):
+            new_start = False     # "PALÁCIO ..., EM 15 DE SETEM-" / "BRO DE 2026." (palavra partida)
         if ITEM_NUMBER.match(text):
+            new_start = True
+        # "DOS TRABALHOS CONJUNTOS" / "Seção I" / "Da organização" (ATC RFB/CGIBS nº 9): a seção e o seu nome
+        # vêm em linhas próprias, sem caixa alta, e grudavam num parágrafo só.
+        if HEADING.match(text) or (paragraphs and HEADING.match(paragraphs[-1].strip())):
             new_start = True
         if QUOTED_LABEL.match(text) or (paragraphs and re.search(r"\((?:NR|AC)\)\s*[.;]?\s*$", paragraphs[-1])):
             new_start = True      # '"Art. 198. ...' / depois de '..." (NR)' ou '..." (AC)'
@@ -580,6 +811,17 @@ def reflow_lines(lines: list[dict], opinion: bool = False, groups: list[list[dic
             new_start = False
         if (paragraphs and re.search(r"\b(?:desta|deste)\s*$", paragraphs[-1], re.I)
                 and re.fullmatch(r"(?:LEI|DECRETO|PORTARIA|RESOLUÇÃO)\.", text, re.I)):
+            new_start = False
+        if paragraphs and re.search(r";\s*(?:e|ou)\s*$", paragraphs[-1]) and DOUBLE_ROMAN.match(text):
+            new_start = True      # "...; e" / "III II - Anexo II, ..." (numeração repetida no diário)
+        if (new_start and len(paragraphs) >= 2 and HEADING.match(paragraphs[-2].strip()) and members
+                and line["top"] - previous_bottom <= 6
+                and looks_uppercase(paragraphs[-1]) and looks_uppercase(text)
+                and not paragraphs[-1].rstrip().endswith((".", ";", ":"))
+                and abs((line["x0"] + line["x1"]) / 2 - (members[-1][-1]["x0"] + members[-1][-1]["x1"]) / 2) <= 4
+                and not any(rx.match(text) for rx in (HEADING, ARTICLE, ANNEX, EPIGRAPH))):
+            # nome do capítulo em várias linhas centralizadas: "DOS VEÍCULOS, DAS AERONAVES, ..." / "DAS BEBIDAS
+            # ALCOÓLICAS, ..." / "EXTRAÍDOS" (CAPÍTULO II da MP nº 1.399/2026) é um título só
             new_start = False
         if line.get("standalone"):
             new_start = True      # assinaturas lado a lado: cada linha é um parágrafo
@@ -840,6 +1082,12 @@ def logo_block(page: Any, upper: float, lower: float, page_number: int) -> Image
 TABLE_NOTE = re.compile(r"^(?:OBS(?:ERVA[ÇC](?:[ÃA]O|[ÕO]ES))?\b|NOTAS?\s*[:.\d]|FONTE\s*:|\*)", re.I)
 
 
+LEGEND_HEAD = re.compile(r"^(?:Siglas|Legenda|Abreviaturas)\s*:?$", re.I)
+LEGEND_ITEM = re.compile(r"\s[-–]\s*[A-Z]{2,12}$")
+NOTE_LABEL = re.compile(r"(?:OBS(?:ERVA[ÇC](?:[ÃA]O|[ÕO]ES))?|NOTAS?)\s*:", re.I)
+NOTE_ITEM = re.compile(r"^(?:\d{1,2}\s*[).]|[a-z]\))\s*\S")
+
+
 def after_table_blocks(lines: list[dict], top: float, bottom: float, page_number: int) -> list[ParagraphBlock]:
     lines = [line for line in lines if top < line["top"] < bottom]
     first_article = next((i for i, line in enumerate(lines) if ARTICLE.match(line["text"].strip())), None)
@@ -852,11 +1100,41 @@ def after_table_blocks(lines: list[dict], top: float, bottom: float, page_number
                 after_table_blocks(lines[signer:], top, bottom, page_number))
     result: list[ParagraphBlock] = []
     previous_bottom = top
+    legend = notes = False
     for line in lines:
         text = line["text"].strip()
         if not text or PROTOCOL.match(text):
             continue
-        note_ended = bool(result and TABLE_NOTE.match(result[-1].text)
+        # "Siglas:" / "Secretaria Especial da Receita Federal do Brasil - RFB" (ATC RFB/CGIBS nº 9): legenda, não
+        # assinatura ("Secretaria" parecia cargo e a linha seguinte, nome).
+        if LEGEND_HEAD.match(text):
+            legend = True
+            result.append(ParagraphBlock(text, "texto", page_number, "footnote"))
+            previous_bottom = line["bottom"]
+            continue
+        if legend and LEGEND_ITEM.search(text):
+            result.append(ParagraphBlock(text, "texto", page_number, "footnote"))
+            previous_bottom = line["bottom"]
+            continue
+        legend = False
+        # "OBSERVAÇÕES:" sozinho e os itens "1) ...", "2) ..." em várias linhas (pautas do CARF/COSIT, DOU de
+        # 26.10.2026): cada item é um parágrafo; antes, com o rótulo "O B S E R V AÇÕ ES :" gravado com espaços,
+        # as linhas saíam juntas, e sem os espaços cada linha virava nome de assinatura
+        if NOTE_LABEL.fullmatch(text):
+            notes = True
+            result.append(ParagraphBlock(text, "texto", page_number, "footnote"))
+            previous_bottom = line["bottom"]
+            continue
+        if (notes and result and line["top"] - previous_bottom < 8 and not CARGO.match(text)
+                and not (looks_like_person_name(text) and text.isupper())):
+            if NOTE_ITEM.match(text) or NOTE_LABEL.fullmatch(result[-1].text.strip()):
+                result.append(ParagraphBlock(text, "texto", page_number, "footnote"))
+            else:
+                result[-1].text = join_line(result[-1].text, text, _VOCABULARY)
+            previous_bottom = line["bottom"]
+            continue
+        after_notes, notes = notes, False
+        note_ended = after_notes or bool(result and TABLE_NOTE.match(result[-1].text)
                           and (result[-1].text.rstrip().endswith((".", ";", ":"))
                                or (looks_like_person_name(text) and text.isupper())))
         # "*Republicada por conter incorreção ... de 30/09/2026." / "MARILDA ..." (assinatura, não nota)
@@ -953,6 +1231,7 @@ def find_text_tables(page: Any, start_y: float, stop_y: float, grid_tables: list
     settings = {"vertical_strategy": "text", "horizontal_strategy": "text",
                 "min_words_vertical": 2, "min_words_horizontal": 1}
     result = []
+    clean_region = None
     for candidate in region.find_tables(table_settings=settings):
         raw = candidate.extract()
         if not raw or len(raw[0]) < 2:
@@ -963,7 +1242,11 @@ def find_text_tables(page: Any, start_y: float, stop_y: float, grid_tables: list
         header = next((i for i in range(data[0] - 1, -1, -1)
                        if sum(bool(v and v.strip()) for v in raw[i]) >= 2), data[0])
         indices = [i for i in range(header, data[-1] + 1) if any(v and v.strip() for v in raw[i])]
-        table = TextTable([candidate.rows[i] for i in indices], [raw[i] for i in indices])
+        # o texto das células sem pontos brancos e sem espaços cobertos (o reconhecimento usa a página como está)
+        clean_region = clean_region or visible_page(region)
+        candidate.page = clean_region
+        cleaned = candidate.extract()
+        table = TextTable([candidate.rows[i] for i in indices], [cleaned[i] for i in indices])
         if table.bbox[2] - table.bbox[0] < 180:
             continue
         if any(max(0, min(table.bbox[2], other.bbox[2]) - max(table.bbox[0], other.bbox[0])) *
@@ -1022,6 +1305,70 @@ def table_title_after_signature(lines: list[dict], table_top: float) -> list[dic
     return run if SIGNER_CARGO.match(cargo) and looks_like_person_name(name) else []
 
 
+DOU_AD = re.compile(r"in\.gov\.br|imprensa\s+nacional|baixe\s+o\s+app|ao\s+alcance\s+de\s+todos", re.I)
+
+
+def column_images(page: Any, text_lines: list[dict], start_y: float, stop_y: float) -> list[dict]:
+    """Imagens da coluna em que estão as linhas (a página do DOU tem duas colunas)."""
+    if not text_lines:
+        return []
+    # lado da página: o expediente do DOU, centralizado, entra na lista da coluna direita e não serve de limite
+    middle = page.width / 2
+    left_share = sum((l["x0"] + l["x1"]) / 2 < middle for l in text_lines) / len(text_lines)
+    side = "esquerda" if left_share >= .9 else "direita" if left_share <= .1 else None
+    return [im for im in page.images if start_y < im["top"] < im["bottom"] < stop_y
+            and (side is None or ((im["x0"] + im["x1"]) / 2 < middle) == (side == "esquerda"))]
+
+
+def content_images(page: Any, text_lines: list[dict], start_y: float, stop_y: float) -> list[dict]:
+    """Trecho do texto publicado como imagem: o inciso I do § 4º do art. 8º da MP nº 1.399/2026 ("I - o fator de
+    ajuste será determinado mediante a aplicação da fórmula FA = 1/(1-MB), em que MB ...") é uma figura no DOU
+    (edição extra B de 04.11.2026, p. 2). O texto não existe no PDF e o inciso sumia do Word."""
+    found = []
+    for im in sorted(column_images(page, text_lines, start_y, stop_y), key=lambda im: im["top"]):
+        if im["width"] < 150 or im["height"] > 300:
+            continue          # brasão / logotipo, ou página digitalizada
+        if any(im["top"] < line_midpoint(line) < im["bottom"] and im["x0"] < (line["x0"] + line["x1"]) / 2 < im["x1"]
+               for line in text_lines):
+            continue          # fundo atrás do texto
+        if any(im["top"] - 150 < line_midpoint(line) < im["bottom"] + 150 and DOU_AD.search(line["text"])
+               for line in text_lines):
+            continue          # propaganda da Imprensa Nacional ("Baixe o app do DOU", DOU de 26.10.2026, p. 64)
+        found.append(im)
+    return found
+
+
+def content_image_block(page: Any, image: dict, page_number: int) -> ImageBlock:
+    box = (max(0, image["x0"] - 1), image["top"] - 1, min(page.width, image["x1"] + 1), image["bottom"] + 1)
+    raster = page.crop(box).to_image(resolution=300).original
+    stream = io.BytesIO()
+    raster.save(stream, format="PNG")
+    return ImageBlock(stream.getvalue(), page_number, "content", image["width"])
+
+
+def normative_with_images(page: Any, extraction: Extraction, lines: list[dict], images: list[dict],
+                          page_number: int, publication: str | None, opinion: bool,
+                          first_region: bool) -> list[Any]:
+    """Os parágrafos da região, com cada imagem de texto no lugar em que aparece."""
+    blocks: list[Any] = []
+    rest = lines
+    for image in images:
+        above = [line for line in rest if line_midpoint(line) < image["top"]]
+        rest = [line for line in rest if line_midpoint(line) >= image["top"]]
+        if above:
+            blocks.extend(normative_blocks(above, page_number, publication, opinion, first_region,
+                                           extraction.quote_state))
+            publication, first_region = None, False
+        blocks.append(content_image_block(page, image, page_number))
+        extraction.issues.append(
+            f"Página {page_number}: um trecho do ato está publicado como imagem no PDF (fórmula ou figura) e foi "
+            "incluído como imagem no Word, no mesmo lugar. Se quiser o texto, digite-o a partir da imagem.")
+    if rest or not blocks:
+        blocks.extend(normative_blocks(rest, page_number, publication, opinion, first_region,
+                                       extraction.quote_state))
+    return blocks
+
+
 def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines: list[dict],
                   page_tables: list[Any], words: list[dict], start_y: float, stop_y: float,
                   page_number: int, publication: str | None, split_columns: bool,
@@ -1037,13 +1384,16 @@ def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines:
             "Use o PDF original para reconstruir este anexo antes de exportar.")
     if not tables:
         region = [line for line in text_lines if start_y <= line["top"] < stop_y]
-        extraction.blocks.extend(normative_blocks(region, page_number, publication, opinion, first_region,
-                                                  extraction.quote_state))
+        images = content_images(page, text_lines, start_y, stop_y)
+        extraction.blocks.extend(normative_with_images(page, extraction, region, images, page_number, publication,
+                                                       opinion, first_region))
         return
     outside_lines = [line for line in text_lines if start_y <= line["top"] < stop_y
                      and not any(line_inside_table(line, table) for table in tables)]
     first_top = tables[0].bbox[1]
-    images = [im for im in page.images if start_y < im["top"] < im["bottom"] < first_top]
+    # brasão acima da tabela, na mesma coluna (a fórmula em imagem da coluna esquerda cortava o texto da direita
+    # ao meio na MP nº 1.399: do inciso II do art. 14 em diante, cada linha virava um parágrafo)
+    images = [im for im in column_images(page, text_lines, start_y, first_top) if im["width"] < 120]
     logo_top = min((im["top"] for im in images), default=first_top)
     all_lines = [line for line in outside_lines if line_midpoint(line) < first_top]
     annex_heading = min((line["top"] for line in all_lines
@@ -1054,8 +1404,9 @@ def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines:
     if title:          # "QUOTA PARTE DO IPI – Período de 01 a 30.09.2026" (Portaria nº 659/2026-SEFA)
         normative_end = min(normative_end, title[0]["top"] - .1)
         before = [line for line in all_lines if line["top"] + 2 < normative_end]
-    extraction.blocks.extend(normative_blocks(before, page_number, publication, opinion, first_region,
-                                              extraction.quote_state))
+    images = content_images(page, text_lines, start_y, normative_end)
+    extraction.blocks.extend(normative_with_images(page, extraction, before, images, page_number, publication,
+                                                   opinion, first_region))
     logo = logo_block(page, normative_end - 2, first_top, page_number)
     if logo:
         extraction.blocks.append(logo)
@@ -1081,10 +1432,16 @@ def append_region(page: Any, pdf_path: Path, extraction: Extraction, text_lines:
             if any(ARTICLE.match(line["text"].strip()) for line in gap_lines):
                 gap_blocks = normative_blocks(gap_lines, page_number)
             else:
-                gap_blocks = [ParagraphBlock(line["text"].strip(),
-                                            "anexo" if ANNEX.match(line["text"].strip()) else "texto",
-                                            page_number, "annex_head")
-                              for line in gap_lines if line["text"].strip()]
+                gap_blocks, legend = [], False
+                for line in gap_lines:
+                    text = line["text"].strip()
+                    if not text:
+                        continue
+                    # "Siglas:" / "... - RFB" entre o Anexo I e o Anexo II (ATC RFB/CGIBS nº 9): legenda da tabela
+                    # acima, como a do fim do ato, e não título do anexo seguinte
+                    legend = bool(LEGEND_HEAD.match(text) or (legend and LEGEND_ITEM.search(text)))
+                    gap_blocks.append(ParagraphBlock(text, "anexo" if ANNEX.match(text) else "texto", page_number,
+                                                     "footnote" if legend else "annex_head"))
             if gap_lines:
                 if character_signature("".join(line["text"] for line in gap_lines)) != character_signature(
                         "".join(block.text for block in gap_blocks)):
@@ -1250,20 +1607,28 @@ def trim_trailing_headings(extraction: Extraction, dou: bool = True) -> None:
     assina ("ASSEMBLEIA LEGISLATIVA - LEIS SANCIONADAS", antes da epígrafe da lei seguinte)."""
     blocks = extraction.blocks
     start = len(blocks)
+    # Só na página onde está o último título: as siglas no pé do ANEXO, na página anterior, ficam (ATC RFB/CGIBS
+    # nº 9, DOU de 26.10.2026: "Siglas:" na p. 38, "SECRETARIA ADJUNTA" ... na p. 39).
+    last_page = getattr(blocks[-1], "page", None) if blocks else None
     while (start > 1 and isinstance(blocks[start - 1], ParagraphBlock) and blocks[start - 1].role == "texto"
-           and _heading_like(blocks[start - 1].text) and (dou or looks_uppercase(blocks[start - 1].text))):
+           and _heading_like(blocks[start - 1].text) and blocks[start - 1].page == last_page
+           and (dou or looks_uppercase(blocks[start - 1].text))):
         start -= 1
     if start == len(blocks):
         return
     before = blocks[start - 1]
     roles = [b.role if isinstance(b, ParagraphBlock) else "tabela" for b in blocks[:start]]
     after_signature = isinstance(before, ParagraphBlock) and before.role == "cargo"
+    new_page = (last_page is not None and getattr(before, "page", None) is not None and before.page < last_page)
     annex_after_signature = dou and ("cargo" in roles and "anexo" in roles[len(roles) - 1 - roles[::-1].index("cargo"):]
-                             and (not isinstance(before, ParagraphBlock)
+                             and (not isinstance(before, ParagraphBlock) or new_page
                                   or before.text.rstrip().endswith((".", ";", ":"))))
     if after_signature or annex_after_signature:
         tail = blocks[start:]
         del blocks[start:]
+        used = {getattr(b, "page", 0) for b in blocks} | {part.page for b in blocks if isinstance(b, TableBlock)
+                                                          for part in table_page_parts(b)}
+        extraction.pages = [p for p in extraction.pages if p <= max(used)]
         extraction.issues.append("Títulos de órgão após o fim do ato foram deixados de fora ("
                                  + "; ".join(b.text for b in tail)[:120] + "); confira.")
 
@@ -1324,6 +1689,21 @@ def epigraph_text(lines: list[dict], index: int) -> str:
     return text
 
 
+def _mostly_uppercase(text: str) -> bool:
+    """"8704.31 E NOS CÓDIGOS 8704.41.00, 8704.51.00, 8704.60.00 e 8704.90.00 DA NCM/SH": o "e" minúsculo
+    do diário não tira a linha do nome do anexo."""
+    letters = [c for c in text if c.isalpha()]
+    return len(letters) >= 8 and sum(c == c.upper() for c in letters) >= .85 * len(letters)
+
+
+def _annex_name_with_number(parts: list[Any], text: str) -> bool:
+    if not parts:
+        return len(text) >= 30 and len(re.findall(r"[^\W\d_]{2,}", text)) >= 5
+    previous = parts[-1].text.rstrip()
+    return bool(previous.endswith(",") or MID_SENTENCE.search(previous)
+                or re.match(r"(?:NA|NAS|NO|NOS|DA|DAS|DO|DOS|DE|E)\s", text))
+
+
 def merge_annex_subtitles(extraction: Extraction) -> None:
     """Depois de "ANEXO I", as linhas em maiúsculas do nome do anexo ("SERVIDORES REMOVIDOS – AUDITOR" /
     "FISCAL DE RECEITAS ESTADUAIS – AFRE") formam um só parágrafo, com o estilo de subtítulo. Antes saíam
@@ -1335,15 +1715,24 @@ def merge_annex_subtitles(extraction: Extraction) -> None:
         index += 1
         if not (isinstance(block, ParagraphBlock) and block.role == "anexo"):
             continue
+        # "(ANEXO I DA LEI Nº 99.100, DE 15 DE MARÇO DE 2024)": a indicação do anexo da lei alterada fica num
+        # parágrafo próprio, antes do nome; colada ao nome, o Consolidador perdia o título do anexo (3.28.1)
+        while (index < len(blocks) and isinstance(blocks[index], ParagraphBlock) and blocks[index].role == "texto"
+               and blocks[index].kind in ("norma", "annex_head")
+               and re.fullmatch(r"\(\s*ANEXO\b[^()]*\)", blocks[index].text.strip(), re.I)):
+            merged.append(blocks[index])
+            index += 1
         parts = []
         while (index < len(blocks) and len(parts) < 4 and isinstance(blocks[index], ParagraphBlock)
                and blocks[index].role == "texto" and blocks[index].kind in ("norma", "annex_head")
-               and looks_uppercase(blocks[index].text) and len(blocks[index].text) <= 120
+               and (looks_uppercase(blocks[index].text) or (parts and _mostly_uppercase(blocks[index].text)))
+               and len(blocks[index].text) <= 120
                and not blocks[index].text.rstrip().endswith((".", ";", ":"))
                and not ANNEX.match(blocks[index].text)
                # nome de anexo é frase sem algarismos ("SERVIDORES REMOVIDOS – AUDITOR"); cabeçalho de coluna de
-               # tabela não lida ("ÁREA/UNIDADE", "3º QUADRIMESTRE - 2026") não entra
-               and not re.search(r"\d", blocks[index].text)
+               # tabela não lida ("ÁREA/UNIDADE", "3º QUADRIMESTRE - 2026") não entra. Algarismos só na frase longa
+               # ou na continuação dela: "AJUSTES ... CLASSIFICADOS" / "NA POSIÇÃO 87.03 DA NCM/SH" (MP nº 1.399)
+               and (not re.search(r"\d", blocks[index].text) or _annex_name_with_number(parts, blocks[index].text))
                and (len(blocks[index].text) >= 8 if parts
                     else len(blocks[index].text) >= 15 and len(blocks[index].text.split()) >= 2)):
             parts.append(blocks[index])
@@ -1406,6 +1795,14 @@ def _row_key(row: list[str]) -> tuple[str, ...]:
     return tuple(" ".join(value.split()).upper() for value in row)
 
 
+def _title_row(table: TableBlock) -> bool:
+    """Primeira linha com texto só na primeira célula: título do quadro ("GTI 1: Assessoria Normativa")."""
+    if not table.matrix or len(table.matrix[0]) < 2:
+        return False
+    first = table.matrix[0]
+    return bool(first[0].strip()) and not any(cell.strip() for cell in first[1:]) and len(first[0]) <= 120
+
+
 def merge_spanning_tables(extraction: Extraction, pdf: Any) -> None:
     """Une fragmentos contíguos ao virar coluna ou página, preservando sua origem."""
     index = 0
@@ -1432,7 +1829,7 @@ def merge_spanning_tables(extraction: Extraction, pdf: Any) -> None:
                                and next_part.column == "direita"
                                and previous_part.bbox[2] < middle + 12
                                and next_part.bbox[0] > middle - 12
-                               and previous_part.bbox[3] > page.height - 75
+                               and previous_part.bbox[3] > page.height - 90   # DOU: corpo até ~1.120 pt
                                and next_part.bbox[1] < 150)
         same_column_continuation = (next_part.page == previous_part.page
                                     and bool(previous_part.column)
@@ -1440,6 +1837,9 @@ def merge_spanning_tables(extraction: Extraction, pdf: Any) -> None:
                                     and 0 <= next_part.bbox[1] - previous_part.bbox[3] <= 7
                                     and abs(next_part.bbox[0] - previous_part.bbox[0]) < 3
                                     and abs(next_part.bbox[2] - previous_part.bbox[2]) < 3)
+        if _title_row(first) and _title_row(second):
+            index += 1            # dois quadros, cada um com seu título ("GTI 8: Economia Digital" / "GTI 9: ...")
+            continue
         last_label = first.matrix[-1][0].strip() if first.matrix[-1] else ""
         finished_total = bool(re.match(r"^TOTA(?:L|IS)\b", last_label, re.I))
         if not ((page_continuation or column_continuation or same_column_continuation)
@@ -1629,8 +2029,14 @@ def extract_act(pdf_path: Path, query: str, max_pages: int = 12, occurrence: int
             blocks_before_page = len(extraction.blocks)
             all_lines = pdf_lines(pdf_path, page_number, fitz_pdf)
             fix_char_case(page, fitz_pdf[page_index], case_fixed.setdefault(page_number, []))
-            all_tables = page.find_tables()
-            all_words = page.extract_words(x_tolerance=.5, y_tolerance=1.5, keep_blank_chars=False)
+            # Tabelas e colunas são reconhecidas na página como está; o texto das células e as palavras vêm da
+            # página sem os pontos brancos e sem os espaços cobertos (ATC RFB/CGIBS nº 9). Reconhecer as tabelas
+            # na página filtrada mudava tabelas de outros atos do mesmo diário.
+            clean = visible_page(page)
+            all_tables = page.find_tables(table_settings=open_top_settings(page))
+            for table in all_tables:
+                table.page = clean
+            all_words = clean.extract_words(x_tolerance=.5, y_tolerance=1.5, keep_blank_chars=False)
             split_columns = has_two_columns(page, all_lines, all_tables)
             if three_columns(all_lines, page.width):
                 extraction.blocking_issues.append(
@@ -1894,6 +2300,17 @@ def add_table(document: Document, block: TableBlock, normalize_municipalities: b
                                       for r0, c0, _, c1 in block.merges)
             and not monetary_values([block.matrix[1]])):
         header_rows = max(header_rows, 2)
+    # Dois títulos em linha inteira ("GTI 7: Serviços Financeiros ..." / "Natureza Mista ...") e depois os
+    # nomes das colunas ("TITULAR | SUPLENTE | REPRESENTAÇÃO", ATC RFB/CGIBS nº 9): os nomes das colunas também
+    # são cabeçalho, como nas tabelas com um só título ("Coordenação Normativa" / "TITULAR | ...").
+    titles = 0
+    while titles < len(block.matrix) and any(r0 == titles == r1 and c0 == 0 and c1 == len(widths) - 1
+                                             for r0, c0, r1, c1 in block.merges):
+        titles += 1
+    if (titles >= 2 and titles < len(block.matrix) - 1
+            and all(value.strip() and value == value.upper() and not re.search(r"\d", value)
+                    for value in block.matrix[titles])):
+        header_rows = max(header_rows, titles + 1)
     for heading_row in table.rows[:header_rows]:
         header = OxmlElement("w:tblHeader")
         header.set(qn("w:val"), "true")
@@ -1982,10 +2399,15 @@ def build_word(extraction: Extraction, model_path: Path, output_path: Path, over
         elif isinstance(block, ImageBlock):
             expected.append("")
             p = model.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT if block.width else WD_ALIGN_PARAGRAPH.CENTER
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.space_before = Pt(0)
-            p.add_run().add_picture(io.BytesIO(block.data), width=Inches(.46))
+            # trecho do ato em imagem: ampliado para a letra ficar perto da do texto do Word (o DOU usa corpo
+            # menor), sem passar da largura da página
+            section = model.sections[-1]
+            available = section.page_width - section.left_margin - section.right_margin
+            width = min(Pt(block.width * 1.4), available) if block.width else Inches(.46)
+            p.add_run().add_picture(io.BytesIO(block.data), width=width)
         elif block.kind in {"norma", "signer", "date"} or block.role == "anexo":
             if block.item is spacer:
                 model.add_paragraph(style="a03_ementa")
@@ -2050,7 +2472,9 @@ def write_pdf_report(extraction: Extraction, report_path: Path, normalize_munici
             sections.append(f'<p><small>Página {block.page} · {html.escape(block.kind)} · {html.escape(block.role)}</small><br>{html.escape(block.text)}'
                             + (f'<br><strong>Conferir: {attention}</strong>' if attention else '') + '</p>')
         elif isinstance(block, ImageBlock):
-            sections.append(f'<p><small>Página {block.page} · imagem do anexo incorporada</small></p>')
+            what = ("trecho do ato publicado como imagem, incluído como imagem no Word; confira"
+                    if block.width else "imagem do anexo incorporada")
+            sections.append(f'<p><small>Página {block.page} · {what}</small></p>')
         else:
             presented, adjustments = formatted_table_matrix(block, normalize_municipalities)
             values = sum(monetary_values(block.matrix).values())
@@ -2090,13 +2514,17 @@ def write_pdf_report(extraction: Extraction, report_path: Path, normalize_munici
                             f'{values} valores monetários. Origem: {html.escape(locations)}. '
                             f'{html.escape(status)}.</p>{adjustment_report}<table>{"".join(table_rows)}</table>')
     issues = "".join(f'<li>{html.escape(issue)}</li>' for issue in extraction.issues + extraction.blocking_issues)
+    pelo_link = bool(extraction.source_url) or not str(extraction.pdf_path).strip(". ")
+    origem_titulo = "Conferência da importação pelo link do DOU" if pelo_link else "Conferência da importação do PDF"
+    origem_link = (f'Página do ato: <a href="{html.escape(extraction.source_url)}">{html.escape(extraction.source_url)}</a>. '
+                   if extraction.source_url else "")
     page = f'''<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Conferência do PDF SEFA</title>
 <style>body{{font:14px/1.45 Arial,sans-serif;max-width:1400px;margin:32px auto;padding:0 22px;color:#222}}
 table{{border-collapse:collapse;width:100%;font-size:12px;margin-bottom:25px}}
 td{{border:1px solid #aaa;padding:4px;vertical-align:top;overflow-wrap:anywhere}}
 td:not(:first-child){{text-align:right}}small{{color:#555}}h1{{font-size:22px}}h2{{font-size:17px}}</style>
-<h1>Conferência da importação do PDF</h1>
-<p>Identificador: {html.escape(extraction.query)} · páginas {', '.join(map(str, extraction.pages))}.
+<h1>{origem_titulo}</h1>
+<p>{origem_link}Identificador: {html.escape(extraction.query)} · páginas {', '.join(map(str, extraction.pages))}.
 Trechos de texto entre tabelas verificados: {extraction.intertable_segments_checked}.
 O conteúdo das tabelas é editável no Word. Confira a correspondência entre rótulos, números e o PDF antes do uso.</p>
 <p>Padronização da grafia de municípios: {'ativada' if normalize_municipalities else 'desativada'}.

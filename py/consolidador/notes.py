@@ -11,6 +11,10 @@ Lei 5.530/89 e LC 123/06):
   Revogados os incisos IV e V do art. 13 pela LC 214/25, ...
   Renumerado o parágrafo único para § 1º do art. 12 pela LC 214/2025, ...
   Redação original, efeitos até 31.12.26.
+  Acrescidos os incisos IX e X ao art. 13 pela LC 214/2025, sem efeitos.
+    (redação futura substituída ou revogada antes de produzir efeitos)
+  Redação dada às alíneas “b” e “c” do art. 41 pela EC 100/26, ...
+    (irmãos consecutivos com a mesma origem: uma nota e um histórico)
 """
 from __future__ import annotations
 from collections import Counter
@@ -19,15 +23,16 @@ import re
 from .model import Target, by_act, corpus_name, norm, ordinal
 from .refs import enumerate_values
 
-NOTE_CITATION = re.compile(r"\bpel[oa]s?\s+(?:art\.\s*\S+\s+d[ao]\s+)?(?:EC|ECR|LC|Lei|Decreto|Emenda|Instru[cç][aã]o Normativa|IN|Portaria|Resolu[cç][aã]o)\s*(?:n[º°o.]?\s*)?[\d.]+/(\d{2,4})\b", re.I)
+NOTE_CITATION = re.compile(r"\bpel[oa]s?\s+(?:art\.\s*\S+\s+d[ao]\s+)?(?:EC|ECR|LC|Lei|Decreto|Emenda|Instru[cç][aã]o Normativa|IN|Portaria|Resolu[cç][aã]o)\s*(?:n[º°o.]?\s*)?(?P<number>[\d.]+)/(\d{2,4})\b", re.I)
 NOTE_DATE = re.compile(r"\befeitos\s+(?:a\s+partir\s+)?de\s+\d{1,2}\.\d{1,2}\.(\d{2,4})\b", re.I)
 
 
 def detect_date_style(blocks):
     """'2' ou '4' dígitos para o ano, conforme as notas dos atos alteradores mais recentes da base.
 
-    As notas são ordenadas pelo ano do ato citado (e não pela data de efeitos, que
-    pode estar no futuro); vence o formato mais usado nessas notas."""
+    As notas são ordenadas pelo ato citado (ano e número), e não pela data de
+    efeitos, que pode estar no futuro. Valem as cinco notas mais recentes: a
+    prática muda com o tempo (a Constituição do Pará usava 2025 e passou a 26)."""
     notes = []
     for b in blocks:
         if b.role not in ("new_note", "old_note"):
@@ -35,10 +40,11 @@ def detect_date_style(blocks):
         cite = NOTE_CITATION.search(b.text)
         if not cite:
             continue
-        digits = cite[1]
+        digits = cite[2]
         year = int(digits) if len(digits) == 4 else 2000 + int(digits) if int(digits) < 70 else 1900 + int(digits)
+        number = int(re.sub(r"\D", "", cite["number"]) or 0)
         votes = [len(digits)] + [len(m[1]) for m in NOTE_DATE.finditer(b.text)]
-        notes.append((year, b.index, votes))
+        notes.append((year, number, b.index, votes))
     if not notes:
         # Sem notas: segue as referências do cabeçalho ("Alterada pelas Leis 6.012/96, ...").
         votes = Counter()
@@ -47,16 +53,8 @@ def detect_date_style(blocks):
                 votes.update(len(m[1]) for m in re.finditer(r"\b\d[\d.]*/(\d{2}|\d{4})\b", b.text))
         return "2" if votes[2] > votes[4] else "4"
     notes.sort(reverse=True)
-    # Usa os atos do ano mais recente (ou dos anos seguintes, até reunir 5 notas):
-    # a prática editorial muda com o tempo e o padrão atual é o que vale.
-    chosen, years = [], []
-    for year, index, votes in notes:
-        if len(chosen) >= 5 and year not in years:
-            break
-        chosen.append(votes)
-        if year not in years:
-            years.append(year)
-    count = Counter(v for votes in chosen for v in votes)
+    recent = notes[:5]
+    count = Counter(v for *_, votes in recent for v in votes)
     return "2" if count[2] > count[4] else "4"
 
 
@@ -64,7 +62,7 @@ def _citation_year(text):
     cite = NOTE_CITATION.search(text)
     if not cite:
         return None
-    digits = cite[1]
+    digits = cite[2]
     return int(digits) if len(digits) == 4 else 2000 + int(digits) if int(digits) < 70 else 1900 + int(digits)
 
 
@@ -104,7 +102,9 @@ def format_citation(citation, style="4"):
     return re.sub(r"(\b\d[\d.]*/)(\d{4}|\d{2})\b", fix, citation.strip(), count=1)
 
 
-def effects_text(effects, style="4"):
+def effects_text(effects, style="4", until=""):
+    if effects and until:
+        return ", efeitos de " + format_date(effects, style) + " a " + format_date(until, style) + "."
     return ", efeitos a partir de " + format_date(effects, style) + "." if effects else "."
 
 
@@ -112,18 +112,20 @@ def until_text(effects, style="4"):
     return format_date((date.fromisoformat(effects) - timedelta(days=1)).isoformat(), style)
 
 
-def _group_description(targets, verb_kind, corpus_suffix=True, caput_parent=False):
+def _group_description(targets, verb_kind, corpus_suffix=True, caput_path=False):
     first = targets[0]
     level = first.level
     plural = len(targets) > 1
     if not plural:
-        desc = first.description(corpus_suffix=corpus_suffix)
+        desc = first.description(corpus_suffix=corpus_suffix, caput_path=caput_path)
     else:
         names = {0: "arts.", 1: "§§", 2: "incisos", 3: "alíneas", 4: "itens"}
         desc = names[level] + " " + enumerate_values([t.parts[level] for t in targets], level)
         if level > 0:
             parent = first.parent()
-            desc += (" da " if parent.level == 3 else " do ") + parent.description(corpus_suffix=corpus_suffix)
+            parent_desc = parent.description(caput=caput_path and level == 2 and not first.paragraph,
+                                             corpus_suffix=corpus_suffix, caput_path=caput_path)
+            desc += (" da " if parent.level == 3 else " do ") + parent_desc
         elif first.corpus != "PRINCIPAL" and corpus_suffix:
             desc += " do " + corpus_name(first.corpus)
     if verb_kind == "add":
@@ -152,11 +154,27 @@ def article_for(level, plural, verb):
 def new_notes(op, citation, style="4", corpus_suffix=True):
     """Notas que antecedem o texto vigente. Uma renumeração com nova redação gera duas notas."""
     cite = format_citation(citation, style)
-    tail = f" {by_act(cite)} " + cite + effects_text(op.effects, style)
+    if getattr(op, "via", ""):
+        # Ato que altera a redação dada por outro ato alterador (LC 227/26 sobre a LC 214/25):
+        # "pela LC 214/25, alterada pela LC 227/26"; "pelo Decreto 1/2026, alterado pelo Decreto 2/2026".
+        changed = "alterado" if by_act(op.via) == "pelo" else "alterada"
+        tail = (f" {by_act(op.via)} " + format_citation(op.via, style) + f", {changed} {by_act(cite)} " + cite
+                + effects_text(op.effects, style, getattr(op, "effects_until", "")))
+    else:
+        tail = f" {by_act(cite)} " + cite + effects_text(op.effects, style, getattr(op, "effects_until", ""))
     targets = op.targets
     level = op.target.level
     plural = len(targets) > 1
     notes = []
+    if op.action == "rename" and op.target.level >= 2:
+        # "Renumerado o inciso II para inciso III do art. 12" (Lei 5.530); alínea no feminino.
+        level = op.target.level
+        unit = {2: "inciso", 3: "alínea", 4: "item"}[level]
+        show = (lambda v: f"“{v}”") if level == 3 else (lambda v: v)
+        where = op.target.parent().description(corpus_suffix=corpus_suffix)
+        verb = "Renumerada a" if level == 3 else "Renumerado o"
+        notes.append(f"{verb} {unit} {show(op.target.parts[level])} para {unit} {show(op.rename_to)} {'da' if op.target.parent().level == 3 else 'do'} {where}{tail}")
+        return notes
     if op.renumber_from or op.action == "rename":
         source = Target(op.target.corpus, op.target.article, op.renumber_from or op.target.paragraph)
         new_number = op.target.paragraph if op.renumber_from else op.rename_to
@@ -165,32 +183,90 @@ def new_notes(op, citation, style="4", corpus_suffix=True):
         notes.append(f"Renumerado o {old_name} para § {ordinal(new_number)} do {where}{tail}")
         if op.action == "rename":
             return notes
+    path = getattr(op, "caput_path", False)
+    if op.action == "annex":
+        from .annexes import note
+        notes.append(note(op.annex_mode, op.annex_key) + tail)
+        return notes
+    if op.action == "heading":
+        from .headings import replace_note, name, KINDS, parse_line
+        kind, _, number = op.heading_key.partition(":")
+        if getattr(op, "heading_rename", False) and op.new_lines:
+            fem = KINDS[kind][1] == "f"
+            new = parse_line(op.new_lines[0])
+            notes.append(f"{'Renumerada a' if fem else 'Renumerado o'} {name(kind, number).replace('Única', 'única').replace('Único', 'único')} para {name(kind, new[1])}" + tail)
+            return notes
+        notes.append(replace_note(kind, number) + tail)
+        return notes
+    if op.action == "add" and getattr(op, "heading", None) and op.heading_key:
+        # Título novo com os seus artigos: a nota é a do título (CF, Seção V-A, EC 132/23).
+        from .headings import add_note
+        kind, _, number = op.heading_key.partition(":")
+        parent = tuple(op.heading_parents.split(":", 1)) if op.heading_parents else None
+        notes.append(add_note(kind, number, parent) + tail)
+        return notes
     if op.action == "replace":
-        desc = op.target.description(caput=op.caput, corpus_suffix=corpus_suffix)
+        desc = op.target.description(caput=op.caput, corpus_suffix=corpus_suffix, caput_path=path)
         if plural:
-            desc = _group_description(targets, "replace", corpus_suffix)
+            desc = _group_description(targets, "replace", corpus_suffix, path)
         notes.append(article_for(level, plural, "replace") + desc + tail)
     elif op.action == "add":
-        notes.append(article_for(level, plural, "add") + _group_description(targets, "add", corpus_suffix) + tail)
+        notes.append(article_for(level, plural, "add") + _group_description(targets, "add", corpus_suffix, path) + tail)
     elif op.action == "revoke":
-        notes.append(article_for(level, plural, "revoke") + _group_description(targets, "revoke", corpus_suffix) + tail)
+        verb = article_for(level, plural, "revoke")
+        if getattr(op, "suppressed", False):
+            verb = verb.replace("Revogad", "Suprimid")
+        notes.append(verb + _group_description(targets, "revoke", corpus_suffix, path) + tail)
     return notes
 
 
+def version_blocks(op, citation, style="4", corpus_suffix=True):
+    """Redações do mesmo dispositivo por período, da mais recente para a mais antiga
+    (padrão da LC 123 consolidada com a LC 214/25):
+      Redação dada ao § 3º do art. 31 pela LC 214/25, efeitos a partir de 01.01.33.
+      § 3º (texto a partir de 2033)
+      Redação dada ao § 3º do art. 31 pela LC 214/25, efeitos de 01.01.27 a 31.12.32.
+      § 3º (texto de 2027 a 2032)
+    Devolve [(notas, linhas)], na ordem do documento."""
+    from copy import copy
+    versions = [dict(action=op.action, effects=op.effects, effects_until=op.effects_until, lines=list(op.new_lines))]
+    versions += [dict(action="replace", effects=v.get("effects", ""), effects_until=v.get("effects_until", ""), lines=list(v.get("lines", [])))
+                 for v in op.later_versions]
+    for i, v in enumerate(versions[:-1]):
+        nxt = versions[i + 1]["effects"]
+        if nxt:
+            v["effects_until"] = (date.fromisoformat(nxt) - timedelta(days=1)).isoformat()
+    out = []
+    for k, v in enumerate(versions):
+        tmp = copy(op)
+        tmp.action, tmp.effects, tmp.effects_until, tmp.later_versions = v["action"], v["effects"], v["effects_until"], []
+        if k:
+            tmp.renumber_from = ""
+        out.append((new_notes(tmp, citation, style, corpus_suffix), v["lines"]))
+    return list(reversed(out))
+
+
 def prior_note(text, effects, citation="", publication="", style="4"):
-    """Fecha a vigência de uma nota que vai para o histórico."""
+    """Fecha a vigência de uma nota que vai para o histórico.
+
+    Redação futura que é substituída ou revogada antes de começar a produzir
+    efeitos (publicação do novo ato antes do início, e novos efeitos até essa
+    data) recebe "sem efeitos", como nas bases SEFA desde 2025."""
     if not effects or re.search(r"\bsem\s+efeitos\b|\befeitos\s+de\s+\d{1,2}[./]\d{1,2}[./]\d{2,4}\s+(?:a|até)\s+\d", text, re.I):
         return text
     until = until_text(effects, style)
-    m = re.search(r"efeitos\s+a\s+partir\s+de\s+(\d{1,2}[./]\d{1,2}[./]\d{2,4})\.?\s*$", text, re.I)
+    m = re.search(r"efeitos\s+a\s+partir\s+de\s+(\d{1,2}[./]\d{1,2}[./]\s?\d{2,4})\.?\s*$", text, re.I)
     if m:
         from .model import date_iso
         try:
-            start = date_iso(m[1])
+            start = date_iso(m[1].replace(" ", ""))
         except ValueError:
             start = ""
-        if start == effects and publication and publication < effects:
-            return text[:m.start()] + f"com efeitos previstos para {m[1]}, substituída {by_act(citation)} {format_citation(citation, style)}, com efeitos a partir da mesma data."
+        if start and effects <= start and publication and publication < start:
+            head = re.sub(r"[,\s]*(?:com\s*)?$", "", text[:m.start()], flags=re.I)
+            return head + ", sem efeitos."
+        if start and effects <= start:
+            return text
         return text[:m.start()] + f"efeitos de {m[1]} a {until}."
     return re.sub(r"\.?\s*$", "", text) + f", efeitos até {until}."
 

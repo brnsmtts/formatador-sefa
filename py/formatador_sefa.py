@@ -68,8 +68,9 @@ PUBLICATION = re.compile(
     r"D(?:O\s*[-–]?\s*E|OE|OU)\b|VIDE\s+(?:DECRETO|LEI|IN|PORTARIA))\b",
     re.I,
 )
-# Lei (3.24): "A ASSEMBLEIA LEGISLATIVA DO ESTADO DO PARÁ estatui e eu sanciono a seguinte Lei:" e "O PRESIDENTE
-# DA REPÚBLICA Faço saber que o Congresso Nacional decreta e eu sanciono a seguinte Lei:" também são preâmbulo.
+# "A ASSEMBLEIA LEGISLATIVA DO ESTADO DO PARÁ estatui e sua Mesa Diretora promulga ..." (Emenda Constitucional
+# estadual e Decreto Legislativo) e "... estatui e eu sanciono a seguinte Lei:" (leis do DOE) também são preâmbulo.
+# Site (3.24 web): também "O PRESIDENTE DA REPÚBLICA Faço saber que o Congresso Nacional decreta e eu sanciono ...".
 PREAMBLE = re.compile(r"^(?:CONSIDERANDO\b|(?:O|A|OS|AS)\s+.{3,600}?\b(?:NO USO|NO DESEMPENHO|NO EXERC[IÍ]CIO|USANDO|FAZ SABER"
                       r"|COM FUNDAMENTO|ESTATUI|FA[CÇ]O SABER|EU SANCIONO)\b)", re.I)
 # Também com letras espaçadas, comum no DOE: "R E S O L V E:" (Portaria nº 2005/2026-SEASTER e outras).
@@ -92,6 +93,10 @@ ARTICLE_LABEL = re.compile(r"^((?:Art|ART)\.?\s*\d+(?:\s*[º°])?(?:\s*[-–]\s*
 # Preâmbulo que termina na própria fórmula de ordem, sem linha "RESOLVE:" separada (DOU)
 INLINE_COMMAND_END = re.compile(r"\b(?:RESOLVEM?|DECRETAM?|DELIBERAM?|DETERMINAM?)\s*:\s*$", re.I)
 PREAMBLE_AUTHORITY = re.compile(r"^((?:O|A|OS|AS)\s+.+?)(?=,?\s+(?:no uso|no desempenho|no exercício|usando)\b|;\s*$)", re.I)
+# Fórmula do Legislativo estadual, como na revisão da Emenda Constitucional nº 102/2026: negrito no órgão e na
+# Mesa, sem o artigo: "A **ASSEMBLEIA LEGISLATIVA DO ESTADO DO PARÁ** estatui e sua **Mesa Diretora** promulga ...".
+LEGISLATIVE_PREAMBLE = re.compile(r"^(?P<art>(?:A|O)\s+)(?P<org>[^,;:]+?)(?P<mid>\s+estatui\s+e\s+(?:sua\s+)?)"
+                                  r"(?:(?P<mesa>Mesa\s+Diretora)(?=\s))?", re.I)
 # "O Secretário de Estado da Fazenda, considerando o disposto ..., resolve:" (Portaria nº 659/2026-SEFA, DOE de
 # 09.10.2026): a autoridade também leva negrito; só com cargo de autoridade e sem vírgula antes de "considerando".
 AUTHORITY_CONSIDERING = re.compile(r"^((?:O|A|OS|AS)\s+[^,;]+?)(?=,\s+(?:considerando|nos termos)\b)", re.I)
@@ -286,7 +291,8 @@ def join_line(previous: str, line: str, vocab: Counter | None = None) -> str:
 # "DÊ-SE CIÊNCIA, REGISTRE-SE, PUBLIQUE-SE E CUMPRA-SE." e "CASA MILITAR DA GOVERNADORIA DO ESTADO, 1º DE
 # OUTUBRO DE 2026." são fórmula de encerramento e local/data, não linhas a conferir.
 CLOSING = re.compile(r"^(?:D[ÊE]-SE CI[ÊE]NCIA|CIENTIFIQUE-SE|REGISTRE-SE|PUBLIQUE-SE|CUMPRA-SE)\b", re.I)
-PLACE_DATE_LINE = re.compile(r"^[^,;:]{3,140},\s*(?:EM\s+)?\d{1,2}[º°]?\s+(?:DE\s+)?[A-ZÇ]+\s+(?:DE\s+)?\d{4}\.?$", re.I)
+PLACE_DATE_LINE = re.compile(r"^[^,;:]{3,140},\s*(?:EM\s+)?\d{1,2}[º°]?\s+(?:DE\s+)?[A-ZÇ]+\s+(?:DE\s+)?\d{4}"
+                             r"(?:;\s*\d+[º°]\s+DA\s+INDEPEND[EÊ]NCIA\s+E\s+\d+[º°]\s+DA\s+REP[UÚ]BLICA)?\.?$", re.I)
 
 
 def looks_like_signer_name(text: str) -> bool:
@@ -321,16 +327,23 @@ SIGNER_SUFFIX = re.compile(
     r"|(?:RG|MF|MAT(?:R[IÍ]CULA)?|CPF|ID\.?\s*FUNC(?:IONAL)?)\b).*$", re.I)
 
 
+# Apelido entre parênteses no fim do nome e posto abreviado no meio ("DEPUTADO FRANCISCO MELO (CHICÃO)",
+# "DEPUTADO CEL. NEIL" - Emenda Constitucional nº 102/2026 do Pará, DOE de 21.10.2026).
+NICKNAME = re.compile(r"\s*\([^()\d]{2,30}\)\s*$")
+ABBREVIATED_TITLE = re.compile(r"[^\W\d_]{2,4}\.")
+
+
 def looks_like_person_name(text: str) -> bool:
     """Aceita nomes em maiúsculas ou com iniciais maiúsculas; exige contexto na classificação. Ignora posto
     e registro depois do nome ("OSMAR VIEIRA DA COSTA JÚNIOR - CEL QOPM RG 9916", DOE de 02.10.2026)."""
-    text = SIGNER_SUFFIX.sub("", text)
+    text = NICKNAME.sub("", SIGNER_SUFFIX.sub("", text))
     words = text.split()
     return (2 <= len(words) <= 8 and not CARGO.match(text) and not SIGNER_CARGO.match(text)
             and not HEADING.match(text) and not ANNEX.match(text)
-            and all(re.fullmatch(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*", word)
+            and all((re.fullmatch(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*", word)
+                     or (index < len(words) - 1 and ABBREVIATED_TITLE.fullmatch(word)))
                     and (word.casefold() in {"de", "da", "do", "das", "dos", "e"}
-                         or word[0].isupper()) for word in words))
+                         or word[0].isupper()) for index, word in enumerate(words)))
 
 
 def ementa_spacer_before(items: list[Item]) -> Item | None:
@@ -383,15 +396,46 @@ def logical_blocks(source: str, join_soft_wraps: bool = False) -> list[Block]:
     return blocks
 
 
+# Aspas abertas que o diário não fecha (Emenda Constitucional nº 102/2026 do Pará, DOE de 21.10.2026: abre em
+# '“Art. 204-A.' e não há '”' nem "(NR)"). O texto citado termina no primeiro dispositivo do próprio ato
+# ("Art. 2º Esta Emenda Constitucional entra em vigor ...") ou no local e data / assinatura. Só vale quando as
+# aspas de fato não se fecham antes da próxima citação; aspas fechadas seguem como antes.
+OWN_PROVISION = re.compile(
+    r"^(?:Art|ART)\.?\s*\d+\s*[º°]?\.?\s*[-–]?\s*(?:(?:Est[ae]|Fica(?:m)?)\b.{0,40}\b(?:Emenda|Lei|Decreto|Portaria|"
+    r"Resolu[cç][aã]o|Instru[cç][aã]o|Ato|Delibera[cç][aã]o)\b|Revoga(?:m)?-se\b|Ficam?\s+revogad)", re.I)
+
+
+def _quote_closes(blocks: list[Block], start: int) -> bool:
+    for index in range(start, len(blocks)):
+        text = blocks[index].text
+        if index > start and (LEGAL_QUOTE.match(text) or EPIGRAPH.match(text)):
+            return False
+        if QUOTE_END.search(text):
+            return True
+    return False
+
+
+def _ends_open_quote(blocks: list[Block], index: int) -> bool:
+    text = blocks[index].text
+    following = blocks[index + 1].text if index + 1 < len(blocks) else ""
+    return bool(OWN_PROVISION.match(text) or re.match(r"^(?:PAL[AÁ]CIO|GABINETE)\b", text, re.I)
+                or PLACE_DATE_LINE.match(text) or (looks_like_person_name(text) and SIGNER_CARGO.match(following)))
+
+
 def classify(source: str, join_soft_wraps: bool = False, state: dict | None = None) -> list[Item]:
-    """state (3.24): guarda entre as regiões de um mesmo ato (colunas e páginas do diário) se uma citação
-    ainda está aberta. Sem isso, os §§ 4º e 5º depois de uma quebra de coluna saíam como texto comum."""
+    """state: guarda entre as regiões de um mesmo ato (colunas e páginas do diário) se uma citação ainda está
+    aberta (e se as aspas dela ainda não tinham fechamento à vista). Sem isso, os §§ 4º e 5º depois de uma quebra
+    de coluna saíam como texto comum (Lei 99.500/2026 do kit de exemplos)."""
     blocks = logical_blocks(source, join_soft_wraps)
+    open_quote: Item | None = None      # primeiro trecho de uma citação cujas aspas o diário não fecha
     items: list[Item] = []
     front = True
     found_epigraph = False
     seen_preamble = False
     in_quote = bool(state and state.get("in_quote"))
+    if in_quote and state.get("open_quote") and not _quote_closes(blocks, 0):
+        # citação aberta numa coluna ou página anterior, ainda sem fechamento à vista nesta
+        open_quote = Item(state["open_quote"], 0, 0, "redacao_nova", "")
     last_heading = False
     after_palace = False
     last_was_name = False
@@ -407,6 +451,19 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
         attention: list[str] = []
         epigraph_joined = False
         inline_command = None
+        unclosed = False
+        if in_quote and open_quote is not None and _ends_open_quote(blocks, block_index):
+            in_quote = False
+            message = (f"Aspas de fechamento (”) acrescentadas: o diário abre a citação em “{open_quote.text.lstrip('“\"')[:25]}” e não a "
+                       f"fecha antes de “{t[:45]}”. Confira no PDF.")
+            if items:
+                last_quoted = items[-1]
+                if not re.search(r"[”\"]\s*(?:\((?:NR|AC)\))?\s*[.;]?\s*$", last_quoted.text):
+                    last_quoted.text = last_quoted.text.rstrip() + "”"       # como na revisão da EC nº 102/2026
+                last_quoted.attention.append(message)
+            else:                                     # a citação ficou aberta na coluna anterior
+                attention.append(message.replace("acrescentadas", "faltando no fim da coluna anterior"))
+            open_quote = None
 
         if EPIGRAPH.match(t) and (front or not found_epigraph):
             following = block_index + 1
@@ -423,6 +480,7 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
             front = True
             seen_preamble = False
             in_quote = False
+            open_quote = None
         elif front and PUBLICATION.match(t):
             role, reason = "publicacao", "Linha de publicação ou referência antes do texto"
         elif COMMAND.match(t):
@@ -430,7 +488,9 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
             front = False
         elif in_quote or LEGAL_QUOTE.match(t):
             role, reason = "redacao_nova", "Trecho normativo entre aspas"
+            opening = not in_quote
             in_quote = not bool(QUOTE_END.search(t))
+            unclosed = opening and in_quote and not _quote_closes(blocks, block_index)
         elif ANNEX.match(t):
             role, reason = "anexo", "Identificador de anexo ou apêndice"
             front = False
@@ -443,8 +503,9 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
         elif opinion and front and not re.match(r"EMENTA\b", t, re.I):
             role, reason = "texto", "Texto da solução de consulta"
             front = False
-        elif last_heading and looks_uppercase(t) and not ARTICLE.match(t) and not t.endswith(('.', ';', ':')):
-            role, reason = "titulo", "Nome da divisão logo após o título"
+        elif (last_heading and (looks_uppercase(t) or (len(t) <= 200 and t[:1].isupper()))
+              and not ARTICLE.match(t) and not t.endswith(('.', ';', ':', ','))):
+            role, reason = "titulo", "Nome da divisão logo após o título"   # "Seção I" / "Da organização"
         elif SIGNATURE_GROUP.match(t):        # vale também no início de uma coluna ("publicação." / "Brasília, ...")
             role, reason = "texto", "Mesa que assina (Emenda Constitucional)"
         elif (looks_like_person_name(t) and not front
@@ -495,6 +556,9 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
             if not ARTICLE.match(t) and not PREAMBLE.match(t):
                 attention.append("Confira se a quebra de linha corresponde a um parágrafo.")
 
+        if re.match(r"^[IVXLCDM]+\s+[IVXLCDM]+\s*[-–]\s", t):
+            attention.append("O diário repete a numeração do inciso (“" + t.split("-")[0].strip()
+                             + " -”); mantida como publicada. Confira.")
         if LABEL_WITHOUT_SPACE.match(t):
             t = block.text = LABEL_WITHOUT_SPACE.sub(r"\1 ", t, count=1)
             attention.append("Espaço inserido depois do rótulo do dispositivo (estava sem espaço no diário).")
@@ -515,11 +579,15 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
         else:
             item = Item(t, block.first_line, block.last_line, role, reason, attention)
         items.append(item)
+        if unclosed:
+            open_quote = item
 
         last_heading = role == "titulo" and bool(HEADING.match(t))
         last_was_name = role == "autoridade"
         after_palace = bool(re.match(r"^(?:PAL[AÁ]CIO|GABINETE)\b", u)
-                            or re.match(r"^[^,;:]+,\s*\d{1,2}\s+de\s+\w+\s+de\s+\d{4}[.]?$", t, re.I)) or last_was_name
+                            or re.match(r"^[^,;:]+,\s*\d{1,2}\s+de\s+\w+\s+de\s+\d{4}"
+                                        r"(?:;\s*\d+[º°]\s+da\s+Independ[eê]ncia\s+e\s+\d+[º°]\s+da\s+Rep[uú]blica)?[.]?$",
+                                        t, re.I)) or last_was_name
         if reason == "Mesa que assina (Emenda Constitucional)":
             after_palace = True
         if role == "cargo":
@@ -527,6 +595,7 @@ def classify(source: str, join_soft_wraps: bool = False, state: dict | None = No
 
     if state is not None:
         state["in_quote"] = in_quote
+        state["open_quote"] = open_quote.text if in_quote and open_quote is not None else ""
     elif in_quote and items:
         items[-1].attention.append("Aspas de redação nova não foram fechadas no texto fornecido.")
     return items
@@ -586,6 +655,20 @@ def add_formatted_paragraph(model: Document, item: Item, runs: list[tuple[str, i
                 run.bold = True
             if marks & 2:
                 run.italic = True
+        return p
+    legislative = LEGISLATIVE_PREAMBLE.match(item.text) if item.role == "texto" else None
+    if legislative:
+        pieces: list[list] = []
+        for name in ("art", "org", "mid", "mesa", "rest"):
+            text = item.text[legislative.end():] if name == "rest" else legislative.group(name)
+            if text:
+                bold = name in ("org", "mesa")
+                if pieces and pieces[-1][1] == bold:
+                    pieces[-1][0] += text
+                else:
+                    pieces.append([text, bold])
+        for text, bold in pieces:
+            p.add_run(text).bold = bold
         return p
     label = ARTICLE_LABEL.match(item.text) if item.role == "texto" and ARTICLE.match(item.text) else None
     if not label and item.role == "texto":
@@ -694,7 +777,7 @@ def run_gui() -> None:
     class App:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("Formatador SEFA 3.24 — textos copiados")
+            self.root.title("Formatador SEFA 3.28.1 — textos copiados")
             self.root.geometry("1080x780")
             self.root.minsize(760, 550)
             self.model_var = tk.StringVar(value=str(DEFAULT_MODEL))

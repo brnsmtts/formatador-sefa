@@ -93,9 +93,10 @@ class Target:
                 labels.append(f"{name} {val}")
         return " / ".join(labels)
 
-    def description(self, caput=False, corpus_suffix=True):
+    def description(self, caput=False, corpus_suffix=True, caput_path=False):
         text = f"art. {ordinal(self.article)}"
-        if caput and self.level == 0:
+        if (caput and self.level == 0) or (caput_path and self.level >= 2 and not self.paragraph):
+            # "inciso XVI do caput do art. 37": só quando o próprio ato o diz assim.
             text = "caput do " + text
         if self.paragraph:
             text = ("parágrafo único" if self.paragraph == "UNICO" else f"§ {ordinal(self.paragraph)}") + " do " + text
@@ -151,6 +152,8 @@ class Operation:
     source: str = ""
     source_location: str = ""
     effects: str = ""
+    # Fim dos efeitos, quando o próprio ato limita o período ("efeitos de X a Y").
+    effects_until: str = ""
     status: str = "revisar"
     reason: str = ""
     selected: bool = False
@@ -175,6 +178,31 @@ class Operation:
     full_text: bool = False
     # Novos filhos imediatos que acompanham a nova redação do caput.
     fold: bool = False
+    # O dispositivo ganha filhos no mesmo ato (a nota fala em "caput").
+    caput_forced: bool = False
+    # O ato cita o inciso "do caput do art. X"; a nota repete essa forma.
+    caput_path: bool = False
+    # Título (Capítulo, Seção...): "secao:V" e superiores "titulo:V/capitulo:III".
+    # Na ação "heading" é o título que muda; num acréscimo, o título novo que
+    # antecede o artigo acrescido ("Acrescida a Seção V-A ao Capítulo I").
+    heading_key: str = ""
+    heading_parents: str = ""
+    heading: list[str] = field(default_factory=list)
+    # "Renumerada a Seção única para Seção I": só o rótulo do título muda.
+    heading_rename: bool = False
+    # Redações seguintes do mesmo dispositivo no mesmo ato, por período
+    # (EC 132/23, LC 214/25): [{"effects": "2033-01-01", "effects_until": "", "lines": [...], "source": "..."}].
+    later_versions: list[dict] = field(default_factory=list)
+    # Ato alterador anterior cuja redação este ato alterou ("pela LC 214/25,
+    # alterada pela LC 227/26"). Vazio na mudança direta.
+    via: str = ""
+    # Anexo inteiro: "replace", "add" ou "revoke"; rótulo na base e no ato; ato em DOCX.
+    annex_mode: str = ""
+    annex_key: str = ""
+    annex_source: str = ""
+    annex_path: str = ""
+    # O ato diz "suprimido" em vez de "revogado" (Constituição do Pará, EC 37/2007).
+    suppressed: bool = False
     source_article: str = ""
     source_item: str = ""
 
@@ -183,6 +211,16 @@ class Operation:
         return [self.target] + list(self.extra_targets)
 
     def display_label(self):
+        if self.action == "annex":
+            return f"Anexo {self.annex_key}" + (f" (Anexo {self.annex_source} do ato)" if self.annex_source and self.annex_source != self.annex_key else "")
+        if self.heading_key and self.action == "heading":
+            from .headings import name
+            kind, _, number = self.heading_key.partition(":")
+            return name(kind, number) + (f" (antes do art. {self.target.article})" if self.target.article else "")
+        if self.later_versions:
+            base = self.target.label() if not self.extra_targets else ""
+            if base:
+                return f"{base} ({len(self.later_versions) + 1} redações)"
         if not self.extra_targets:
             return self.target.label()
         from .refs import enumerate_values
@@ -224,6 +262,7 @@ class Plan:
     date_style: str = "auto"
     resolved_date_style: str = "4"
     adct_suffix: bool = True
+    converted_amender: str = ""
 
     def to_dict(self):
         return asdict(self)

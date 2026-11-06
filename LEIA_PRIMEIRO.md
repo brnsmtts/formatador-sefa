@@ -1,6 +1,6 @@
-# Formatador SEFA 3.24, versão web
+# Formatador SEFA 3.28.1, versão web
 
-O site tem duas abas no topo: **Formatar ato**, a tela Importar ato do PDF do Formatador SEFA, e **Aplicar alterações**, o Consolidador SEFA (veja a seção própria). As duas rodam inteiras no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
+O site tem duas abas no topo: **Formatar ato**, a tela Importar ato do Formatador SEFA (pelo PDF do diário ou pela página do ato no DOU), e **Aplicar alterações**, o Consolidador SEFA (veja a seção própria). As duas rodam inteiras no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
 
 ## Testar no seu computador
 
@@ -33,20 +33,21 @@ O primeiro acesso baixa cerca de 41 MB (Python e bibliotecas). Nos seguintes, o 
 
 ## Atualizar para uma nova versão do formatador
 
-1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
-2. Em `worker.js`, aumente o número em `const VERSAO = "3.24-web2";` (por exemplo, para `3.24-web3` ou `3.25-web1`). Assim os navegadores não usam os arquivos antigos guardados.
+1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `importar_dou.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
+2. Em `worker.js`, aumente o número em `const VERSAO = "3.28.1-web2";` (por exemplo, para `3.28.1-web3` ou `3.29-web1`). Assim os navegadores não usam os arquivos antigos guardados.
 3. Publique de novo.
 
 Se uma versão nova passar a importar outro módulo, acrescente o nome do arquivo à lista `ARQUIVOS` em `worker.js`.
 
-Antes de copiar, confira se a versão nova do computador traz as correções feitas a partir da versão web (o fim do ALTERACOES dela deve falar delas). A 3.21 a 3.23 foram feitas sem elas, e foi preciso juntá-las de novo. A 3.24 do computador já traz todas.
+Antes de copiar, confira se a versão nova do computador traz as correções feitas a partir da versão web (o fim do ALTERACOES dela deve falar delas). A 3.21 a 3.23 e a 3.25 a 3.28 foram feitas sem elas, e foi preciso juntá-las de novo. A 3.28.1 do computador e o Consolidador 1.6.1 já trazem todas: use-os como ponto de partida das próximas versões.
 
 O `web_ponte.py` é o único arquivo próprio da web. Ele:
 - desenha os recortes de imagem com o PyMuPDF, porque o pypdfium2 do pdfplumber não tem edição para esta versão do Pyodide;
+- recebe a página do DOU já lida pela página (o navegador busca a página e as figuras; o Python não acessa a rede);
 - faz os links consultarem só a tabela;
 - troca as janelas e diálogos pelo envio e download de arquivos.
 
-## Aba Aplicar alterações (Consolidador SEFA 1.4.3)
+## Aba Aplicar alterações (Consolidador SEFA 1.6.1)
 
 A aba **Aplicar alterações** é o Consolidador SEFA rodando no navegador. Os módulos da pasta `py/consolidador/` e o `py/modelos/estilos_sefa.xml` vêm do programa do computador, sem alteração; a `gui.py` e a `cli.py` ficam de fora, porque a janela é a própria página. O `py/consolidador_ponte.py` refaz para a página o que a janela do programa faz: a seleção das propostas, a validação da correção, a mudança manual, a aprovação da extração de PDF/HTML e a abertura do plano salvo.
 
@@ -54,7 +55,7 @@ Como usar:
 1. Escolha a legislação a ser alterada, em Word (.docx), e o ato alterador (Word, PDF com texto, TXT ou HTML). Não precisa ser o Word gerado na aba Formatar ato.
 2. Se quiser, informe o ato alterador, a publicação e os efeitos gerais (em branco, o programa lê do ato) e o ano nas notas.
 3. Clique em **Analisar alterações**. Cada mudança vira uma linha da lista, com a situação, a ação, o destino, os efeitos e a origem. Clique numa linha para conferir as abas Texto atual na base, Nova redação, Trecho do ato alterador, Efeitos e remissões e Observações.
-4. Para corrigir, edite a nova redação ou abra **Corrigir ação, destino e datas** e clique em **Validar correção** (ou Ctrl+Enter). **Ampliar** mostra a revisão na tela inteira; Esc volta. A coluna **Aplicar** marca o que vai para o Word. Há também **Adicionar mudança manual**, **Remover proposta** e **Aprovar extração do PDF/HTML**, como no programa.
+4. Para corrigir, edite a nova redação ou abra **Corrigir ação, destino e datas** e clique em **Validar correção** (ou Ctrl+Enter). **Ampliar** mostra a revisão na tela inteira; Esc volta. A coluna **Aplicar** marca o que vai para o Word. Há também **Adicionar mudança manual**, **Remover proposta** e **Aprovar extração do PDF/HTML**, como no programa. Em **Ação** estão também Renumerar dispositivo (com o campo **Novo número**), Nova redação de título, Anexo inteiro e Inserir nota (Vide, decisão judicial); a aba **Notas Vide — editar aqui** muda as notas Vide da proposta, uma por linha.
 5. **Gerar Word atualizado** salva uma cópia, com o nome da base terminado em `_CONSOLIDADO.docx`. **Realçar alterações em amarelo** marca os textos novos e as notas desta geração. **Ver relatório** abre o plano numa aba nova; **Salvar plano** grava o plano (.json) para continuar depois.
 
 Diferenças em relação ao programa do computador:
@@ -63,9 +64,26 @@ Diferenças em relação ao programa do computador:
 - Não há os botões Abrir base no Word, Abrir ato alterador e Abrir resultado: os arquivos estão no seu computador.
 - **Exemplo de uso** carrega os dois Word fictícios da pasta `exemplos/consolidador/`.
 
-Para atualizar o Consolidador numa versão nova, copie os `.py` da pasta `consolidador` do programa (menos `gui.py` e `cli.py`) para `py/consolidador/` e os arquivos da pasta `modelos` (`estilos_sefa.xml` e `estilos_sefa_atual.xml`) para `py/modelos/`, e aumente a `VERSAO` em `worker.js`. Se a versão nova tiver um módulo novo, acrescente o nome dele à lista `ARQUIVOS` em `worker.js`.
+Para atualizar o Consolidador numa versão nova, copie os `.py` da pasta `consolidador` do programa (menos `gui.py` e `cli.py`; a 1.6 trouxe `annexes.py` e `headings.py`) para `py/consolidador/` e os arquivos da pasta `modelos` (`estilos_sefa.xml` e `estilos_sefa_atual.xml`) para `py/modelos/`, e aumente a `VERSAO` em `worker.js`. Se a versão nova tiver um módulo novo, acrescente o nome dele à lista `ARQUIVOS` em `worker.js`.
 
 Testes: no Python do computador e no do navegador, o exemplo fictício saiu igual ao `03_Resultado_ESPERADO.docx` do programa, e os casos da LC 123 com a LC 238/26 (com a base em .docx), da Constituição Federal com a EC 136/25 e da Lei 5.530 com a Lei 11.233/25 saíram iguais ao Word do motor do programa chamado direto (21, 9 e 4 propostas, todas prontas). Com o ato alterador em PDF, as 4 propostas ficaram pendentes de conferência e, depois de Aprovar extração, o Word saiu igual ao do ato em Word. No navegador, a Constituição levou cerca de 9 segundos para analisar e 19 para gerar.
+
+## Versão 3.28.1 e Consolidador 1.6.1
+
+As versões 3.25 a 3.28 do Formatador e 1.5 e 1.6 do Consolidador foram feitas a partir da 3.23 e da 1.4.1, sem as correções que estavam só no site (3.24 web, 1.4.2 e 1.4.3). Elas foram juntadas de novo: a **3.28.1** é a 3.28 com essas correções, e a **1.6.1** é a 1.6 com elas. Nada das versões novas foi retirado. Os módulos do site são os mesmos dos pacotes 3.28.1 e 1.6.1 do computador.
+
+Aba Formatar ato:
+- **Página do DOU.** No passo 1, escolha **PDF do diário** ou **Página do DOU**. Com a página do DOU, cole o link do ato (https://www.in.gov.br/web/dou/-/...) e clique em **Importar a página do DOU**. O navegador não deixa o site ler o in.gov.br direto, então a página e as figuras são lidas pelo intermediário público allorigins (`api.allorigins.win`), o mesmo do Formatador CONFAZ. Se o link não abrir, o site explica como salvar a página: no DOU, Ctrl+S, “Página da Web, arquivo único” (.mhtml), e arrastar o arquivo para o passo 1; o arquivo único traz as figuras. A página salva só em HTML também serve, mas sem as figuras. Figura que não vier sai no Word com a marca “[FIGURA DO ATO: …]”, e o site avisa.
+- Da 3.25 à 3.28: tabelas e figuras de atos do DOU (também pelo PDF), Ato Técnico Conjunto, Emenda Constitucional e Decreto Legislativo estaduais e as demais correções do `ALTERACOES.txt` do programa.
+- A linha “(ANEXO I DA LEI …)” logo abaixo do anexo fica à parte do nome do anexo. Colada ao nome, fazia o título sumir quando o anexo era aplicado na aba Aplicar alterações.
+
+Aba Aplicar alterações (1.5 e 1.6): anexo inteiro, nova redação de título de capítulo ou seção, renumeração de §, inciso e alínea, substituição de expressão, nota “sem efeitos”, redações por período, ato que altera um ato alterador, uma só nota para dispositivos irmãos e “Redação dada ao caput” no artigo que passa a ter incisos. Os campos novos (ações, Novo número, notas Vide) estão descritos acima.
+
+Correção do site: **Validar correção** dava “'JsNull' object has no attribute 'splitlines'” em qualquer proposta (o valor vazio das notas Vide chegava ao Python do navegador como JsNull). Corrigido em `worker.js` e `py/consolidador_ponte.py`.
+
+Arquivos novos: `py/importar_dou.py`, `py/consolidador/annexes.py` e `py/consolidador/headings.py` (já na lista `ARQUIVOS` do `worker.js`). A `VERSAO` passou a `3.28.1-web2`.
+
+Testes: 38 atos (os de referência, os fictícios da 3.25 à 3.28 e os do kit didático) saíram idênticos no Python do computador e no do navegador. A página do DOU foi testada no navegador pelo link (com o intermediário simulado, com e sem a figura, e fora do ar), pela página salva em .mhtml e em .html, e o Word saiu igual ao do Python do computador. Na aba Aplicar alterações, o exemplo fictício e os casos reais (CF + EC 136/25, LC 123 + LC 238/26, Lei 5.530 + Lei 11.233/25) saíram iguais aos do programa, e o kit de exemplos didáticos refeito para a 1.6.1 passou inteiro na tela, sem contornos. Passaram os 240 testes do Formatador e os 138 do Consolidador.
 
 ## Consolidador 1.4.3 (lista de estilos completa)
 
@@ -147,6 +165,8 @@ Para o pacote caber num arquivo só, a biblioteca PyMuPDF (18 MB) não vem na pa
 **Salvar com escolha de pasta e nome.** No Edge e no Chrome, os botões que salvam arquivos (Gerar o Word, Salvar o Word de novo, Salvar o relatório, Salvar o Word editado e Exportar para a tabela) abrem a janela "Salvar como", com o nome do ato já sugerido; o navegador lembra a última pasta usada. Em Gerar o Word, a janela aparece logo no clique e o Word é gravado no lugar escolhido assim que fica pronto. Em navegadores sem esse recurso, os arquivos vão para a pasta de downloads.
 
 **Gerar PDF.** O botão Gerar PDF, no passo 4 e no quadro do Word gerado, faz as mesmas conferências, monta as páginas e abre a janela de impressão: escolha **Salvar como PDF**, a pasta e o nome. Não é preciso abrir o editor antes.
+
+**Página do DOU.** O programa do computador lê o link direto no in.gov.br (ou pelo Edge/Chrome). O site não pode: o navegador bloqueia a leitura de outro domínio. Por isso o site lê pelo intermediário allorigins, um serviço público e gratuito que repassa a página; o link do ato passa por ele, e nada mais. Se ele estiver fora do ar ou o DOU o recusar, use a página salva (.mhtml).
 
 **Word.** O Word é baixado e não abre sozinho. O relatório de conferência, quando marcado, vem num botão à parte.
 

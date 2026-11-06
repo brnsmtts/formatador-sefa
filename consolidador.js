@@ -11,6 +11,7 @@ const consEst = {
   estado: null,        // última resposta do Python
   ativo: "",           // id da proposta em revisão
   sujo: false,         // campos da proposta editados e ainda não validados
+  videEditado: false,  // a aba "Notas Vide" foi editada (só então as notas vão na correção)
   carregando: false,
   aba: "antes",
   versao: "",
@@ -251,6 +252,7 @@ function preencherRevisao() {
     $("cons-nova").value = "";
     $("cons-trecho").textContent = "O trecho do ato alterador aparecerá aqui quando uma proposta for selecionada.";
     $("cons-notas").textContent = "As datas identificadas e as remissões aparecerão aqui quando uma proposta for selecionada.";
+    $("cons-vide").value = "";
   } else {
     $("cons-rev-titulo").textContent = `${op.id} · ${op.situacao.toUpperCase()} · ${op.destino || "destino pendente"}`;
     $("cons-rev-motivo").textContent = op.motivo;
@@ -265,10 +267,12 @@ function preencherRevisao() {
     $("cons-nova").value = op.nova;
     $("cons-trecho").textContent = op.trecho;
     $("cons-notas").textContent = op.notas;
+    $("cons-vide").value = op.vide || "";
     // o que precisa de correção já abre os campos
     $("cons-corrigir").open = op.situacao === "revisar" || !op.destino;
   }
   marcarSujo(false);
+  consEst.videEditado = false;
   mostrarAbaCons(consEst.aba);
   consEst.carregando = false;
 }
@@ -298,9 +302,10 @@ function marcarSujo(valor) {
   consEst.sujo = valor;
   $("cons-sujo").hidden = !valor;
 }
-for (const id of ["cons-acao", "cons-corpo", "cons-destino", "cons-alcance", "cons-efeitos-op", "cons-renumerar", "cons-nova"]) {
+for (const id of ["cons-acao", "cons-corpo", "cons-destino", "cons-alcance", "cons-efeitos-op", "cons-renumerar", "cons-nova", "cons-vide"]) {
   $(id).addEventListener("input", () => { if (!consEst.carregando && consEst.ativo) marcarSujo(true); });
 }
+$("cons-vide").addEventListener("input", () => { if (!consEst.carregando) consEst.videEditado = true; });
 
 function selecionarCons(id) {
   if (id === consEst.ativo) return;
@@ -356,13 +361,14 @@ async function validarCons() {
   const r = await chamar("consCorrigir", {
     id: op.id, acao: $("cons-acao").value, corpo: $("cons-corpo").value, destino: $("cons-destino").value,
     alcance: $("cons-alcance").value, efeitos: $("cons-efeitos-op").value, renumerar: $("cons-renumerar").value,
-    nova: $("cons-nova").value,
+    nova: $("cons-nova").value, vide: consEst.videEditado ? $("cons-vide").value : null,
   });
   if (!r.ok) {
     mostrarErroRevisao(`Confira os campos: ${r.erro}`);
     return false;
   }
   consEst.sujo = false;
+  consEst.videEditado = false;
   receberEstado(r);
   return true;
 }

@@ -1,6 +1,6 @@
 """Ponte entre a página web e o Formatador SEFA, rodando no navegador (Pyodide).
 
-Os módulos do programa desktop (extrator_pdf, importar_pdf, formatador_sefa,
+Os módulos do programa desktop (extrator_pdf, importar_pdf, importar_dou, formatador_sefa,
 links_no_word, links_legislacao) entram SEM alteração. Tudo o que é específico do
 navegador fica aqui:
 
@@ -9,7 +9,9 @@ navegador fica aqui:
 - a busca de links consulta apenas a tabela_links.tsv embutida no site, porque a página
   não consegue falar com o site de legislação da SEFA nem com o Planalto;
 - arquivos entram e saem pela pasta de trabalho /work (o JavaScript grava o PDF lá e lê
-  o Word e o relatório gerados).
+  o Word e o relatório gerados);
+- a importação pelo DOU usa a página salva do ato (.mhtml ou .html), porque o navegador não
+  deixa o site ler o in.gov.br; as figuras vêm do arquivo único (.mhtml), sem rede.
 
 Cada função pública devolve um texto JSON, que o JavaScript converte com JSON.parse.
 """
@@ -34,7 +36,7 @@ from PIL import Image  # noqa: E402
 TRABALHO = Path("/work")
 TRABALHO.mkdir(exist_ok=True)
 ESTADO: dict = {"extracao": None, "pdf": None, "consulta": "", "municipios": True,
-                "versao": 0, "previa": None}
+                "versao": 0, "previa": None, "origem": "pdf"}
 _HISTORICO: list = []        # cópias da análise antes de cada correção, para desfazer
 
 
@@ -72,6 +74,7 @@ pdfplumber.page.Page.to_image = _to_image_pymupdf
 
 # Só agora os módulos do programa (eles importam pdfplumber e fitz)
 import extrator_pdf as ex  # noqa: E402
+import importar_dou as dou  # noqa: E402
 import importar_pdf as imp  # noqa: E402
 import links_legislacao as ll  # noqa: E402
 import links_no_word as lnw  # noqa: E402
@@ -189,7 +192,18 @@ def _extracao():
 
 
 def nome_sugerido(consulta: str) -> str:
-    return re.sub(r"[^\w.-]+", "_", consulta).strip("_") + "_SEFA.docx"
+    return (re.sub(r"[^\w.-]+", "_", consulta).strip("_")[:120] or "ato_DOU") + "_SEFA.docx"   # como dou.nome_sugerido
+
+
+def _imagem_previa(bloco) -> dict:
+    """Figura do texto do ato (fórmula, fluxograma) ou brasão do anexo, para mostrar na prévia."""
+    import base64
+
+    dados = bytes(getattr(bloco, "data", b"") or b"")
+    tipo = "image/jpeg" if dados[:2] == b"\xff\xd8" else "image/png"
+    conteudo = getattr(bloco, "kind", "") == "content" or bool(getattr(bloco, "width", 0))
+    return {"conteudo": conteudo, "largura": float(getattr(bloco, "width", 0) or 0),
+            "src": f"data:{tipo};base64," + base64.b64encode(dados).decode("ascii") if dados else ""}
 
 
 def estado() -> str:
@@ -207,21 +221,23 @@ def estado() -> str:
             tabelas.append({"i": ti, "linhas": apresentada, "problemas": list(t.issues),
                             "conferida": t.reviewed,
                             "paginas": sorted({p.page for p in partes})})
-        ordem, ip, it = [], 0, 0
+        ordem, ip, it, imagens = [], 0, 0, []
         for bloco in e.blocks:  # sequência real do documento: parágrafos, tabelas e imagens
             if isinstance(bloco, ex.ParagraphBlock):
                 ordem.append(["p", ip, bloco.page]); ip += 1
             elif isinstance(bloco, ex.TableBlock):
                 ordem.append(["t", it, bloco.page]); it += 1
             else:
-                ordem.append(["img", 0, bloco.page])
+                ordem.append(["img", len(imagens), bloco.page])
+                imagens.append(_imagem_previa(bloco))
         valores = sum(sum(t.source_numbers.values()) for t in e.tables)
         erros_tabela = imp.check_table_numbers(e)
         return _json(paginas=list(e.pages), paragrafos=paragrafos, tabelas=tabelas, ordem=ordem, valores=valores,
                      erros_tabela=erros_tabela, bloqueios=list(e.blocking_issues),
                      limites=list(e.issues), limites_conferidos=e.limits_reviewed,
                      estilos=list(STYLES), municipios=municipios, pode_desfazer=len(_HISTORICO),
-                     removidos=len(getattr(e, "removidos_web", [])),
+                     removidos=len(getattr(e, "removidos_web", [])), imagens=imagens,
+                     origem=ESTADO.get("origem", "pdf"), url=getattr(e, "source_url", ""),
                      nome_sugerido=nome_sugerido(ESTADO["consulta"]))
     except Exception as exc:
         return _erro(exc)
@@ -561,6 +577,61 @@ def analisar(caminho_pdf: str, consulta: str, max_paginas: int = 12, ocorrencia:
         ESTADO["extracao"] = ex.extract_act(caminho, consulta, max_pages=max_paginas,
                                             occurrence=ocorrencia or None)
         ESTADO["consulta"] = consulta
+        ESTADO["origem"] = "pdf"
+        ESTADO["versao"] += 1
+        _HISTORICO.clear()
+        return estado()
+    except Exception as exc:
+        ESTADO["extracao"] = None
+        return _erro(exc)
+
+
+def _figura_da_pagina(src: str, url_pagina: str) -> bytes:
+    """Figura do ato: a que veio no arquivo único (.mhtml), a que o site baixou pelo link ou a embutida
+    na própria página (data:). Sem a figura, o Word sai com a marca "[FIGURA DO ATO: ...]" no lugar,
+    como no programa do computador quando o DOU recusa."""
+    if src.startswith("data:"):
+        return dou.baixar_imagem(src, url_pagina)
+    salva = dou.figura_salva(src, url_pagina)
+    if salva:
+        return salva
+    raise ConnectionError("a figura não veio com a página; salve a página como “Página da Web, arquivo único”")
+
+
+def _figuras_baixadas(indice: str) -> None:
+    """Figuras que o site já baixou pelo link (o navegador busca; aqui só entram no lugar das salvas).
+    indice: JSON [{"src": ..., "url": ..., "arquivo": ...}] gravado pelo worker."""
+    if not indice or not Path(indice).is_file():
+        return
+    for f in json.loads(Path(indice).read_text(encoding="utf-8")):
+        try:
+            dados = Path(f["arquivo"]).read_bytes()
+        except (OSError, KeyError):
+            continue
+        for chave in (f.get("src"), f.get("url")):
+            if chave:
+                dou.FIGURAS_SALVAS[chave] = dados
+
+
+def analisar_pagina(caminho: str, link: str = "", figuras: str = "", pelo_link: bool = False) -> str:
+    """Importação pelo DOU: a página do ato salva no computador (Ctrl+S no Edge/Chrome), em .mhtml
+    (arquivo único, com as figuras) ou .html, ou a página que o site leu pelo link (pelo_link), com as
+    figuras que ele baixou (figuras: índice JSON). link: o endereço da página, se a pessoa o colou."""
+    try:
+        html, url = dou.baixar_pagina(caminho)
+        link = (link or "").strip()
+        if link and not dou.eh_link_dou(link):
+            raise ValueError("O link não é de uma página de ato do DOU. Ele deve começar por "
+                             "https://www.in.gov.br/web/dou/-/ (abra o ato no DOU e copie o endereço da barra).")
+        if pelo_link and link:
+            url = link
+        _figuras_baixadas(figuras)
+        pagina = dou.ler_pagina(html, url or link)
+        e = dou.extrair_pagina(pagina, obter_imagem=_figura_da_pagina)
+        ESTADO["pdf"] = None
+        ESTADO["extracao"] = e
+        ESTADO["consulta"] = e.query
+        ESTADO["origem"] = "dou"
         ESTADO["versao"] += 1
         _HISTORICO.clear()
         return estado()
@@ -624,6 +695,8 @@ def recorte_tabela(tabela: int, linha: int, destino: str) -> str:
     """Grava em destino o PNG do trecho do PDF onde está a linha da tabela (Ver tabela no PDF)."""
     try:
         e = _extracao()
+        if ESTADO.get("origem") == "dou":
+            raise ValueError("Esta tabela veio da página do DOU, e não de um PDF. Confira-a na página do ato.")
         t = e.tables[int(tabela)]
         partes = ex.table_page_parts(t)
         parte = next((p for p in partes if p.first_row <= int(linha) < p.last_row), partes[0])
