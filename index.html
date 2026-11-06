@@ -487,16 +487,7 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
           <input type="url" id="link-dou" placeholder="https://www.in.gov.br/web/dou/-/..." autocomplete="off">
           <button class="botao" type="button" id="abrir-dou">Abrir no DOU</button>
         </div>
-        <label class="soltar" id="soltar-dou">
-          <input type="file" id="arquivo-dou" accept=".mhtml,.mht,.html,.htm">
-          <strong>Arraste aqui a página salva</strong>
-          <span class="dica">ou clique para escolher (.mhtml ou .html)</span>
-        </label>
-        <div class="arquivo" id="dou-escolhido" hidden>
-          <span class="nome"><span id="dou-nome"></span> <span class="tam" id="dou-tam"></span></span>
-          <button class="ligacao" type="button" id="trocar-dou">Trocar</button>
-        </div>
-        <p class="dica">Cole o link e clique em <b>Importar a página do DOU</b>: o site lê a página do ato e baixa as figuras (pelos intermediários públicos allorigins e codetabs, como no Formatador CONFAZ, porque o DOU não deixa sites lerem a página direto). Se não der certo, abra o ato no DOU, aperte <b>Ctrl+S</b>, salve como <b>“Página da Web, arquivo único”</b> (.mhtml, com as figuras) e arraste o arquivo aqui.</p>
+        <p class="dica">Cole o link da página do ato: a prévia aparece ao lado. O site lê a página e baixa as figuras pelos intermediários públicos allorigins e codetabs, como o Formatador CONFAZ, porque o DOU não deixa sites lerem a página direto.</p>
       </div>
     </section>
 
@@ -508,7 +499,7 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
         <label class="campo" for="max-paginas">Máximo de páginas do ato</label>
         <input type="number" id="max-paginas" min="1" max="100" value="12">
       </div>
-      <p class="dica" id="dica-dou" hidden>O ato é lido da página do DOU (pelo link ou salva): título, ementa, texto, tabelas e figuras. A linha “Publicada no DOU de ...” sai da data da página.</p>
+      <p class="dica" id="dica-dou" hidden>O ato é lido da página do DOU: título, ementa, texto, tabelas e figuras. A linha “Publicada no DOU de ...” sai da data da página.</p>
       <button class="botao principal largo" type="button" id="analisar" disabled>Analisar PDF</button>
       <div id="analisar-erro"></div>
     </section>

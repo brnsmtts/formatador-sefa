@@ -10,8 +10,8 @@ navegador fica aqui:
   não consegue falar com o site de legislação da SEFA nem com o Planalto;
 - arquivos entram e saem pela pasta de trabalho /work (o JavaScript grava o PDF lá e lê
   o Word e o relatório gerados);
-- a importação pelo DOU usa a página salva do ato (.mhtml ou .html), porque o navegador não
-  deixa o site ler o in.gov.br; as figuras vêm do arquivo único (.mhtml), sem rede.
+- a importação pelo link do DOU: a página (app.js) lê a página do ato pelos intermediários, separa a área do
+  texto e os dados de publicação e grava aqui só essa parte (.html), com as figuras que baixou.
 
 Cada função pública devolve um texto JSON, que o JavaScript converte com JSON.parse.
 """
@@ -587,15 +587,14 @@ def analisar(caminho_pdf: str, consulta: str, max_paginas: int = 12, ocorrencia:
 
 
 def _figura_da_pagina(src: str, url_pagina: str) -> bytes:
-    """Figura do ato: a que veio no arquivo único (.mhtml), a que o site baixou pelo link ou a embutida
-    na própria página (data:). Sem a figura, o Word sai com a marca "[FIGURA DO ATO: ...]" no lugar,
+    """Figura do ato: a que o site baixou pelo link ou a embutida na própria página (data:). Sem a figura, o Word sai com a marca "[FIGURA DO ATO: ...]" no lugar,
     como no programa do computador quando o DOU recusa."""
     if src.startswith("data:"):
         return dou.baixar_imagem(src, url_pagina)
     salva = dou.figura_salva(src, url_pagina)
     if salva:
         return salva
-    raise ConnectionError("a figura não veio com a página; salve a página como “Página da Web, arquivo único”")
+    raise ConnectionError("o DOU não entregou a figura")
 
 
 def _figuras_baixadas(indice: str) -> None:
@@ -626,9 +625,9 @@ def _html_enxuto(html: str) -> str:
 
 
 def analisar_pagina(caminho: str, link: str = "", figuras: str = "", pelo_link: bool = False) -> str:
-    """Importação pelo DOU: a página do ato salva no computador (Ctrl+S no Edge/Chrome), em .mhtml
-    (arquivo único, com as figuras) ou .html, ou a página que o site leu pelo link (pelo_link), com as
-    figuras que ele baixou (figuras: índice JSON). link: o endereço da página, se a pessoa o colou."""
+    """Importação pelo link do DOU: caminho é a parte da página que interessa (área do texto do ato e dados de
+    publicação), já separada pela página do site; figuras: índice JSON das figuras que ela baixou; link: o
+    endereço da página do ato (pelo_link: vale como endereço da página)."""
     try:
         html, url = dou.baixar_pagina(caminho)
         link = (link or "").strip()

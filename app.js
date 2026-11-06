@@ -1,4 +1,4 @@
-/* Formatador SEFA na web: tela de importar ato do PDF ou da página salva do DOU.
+/* Formatador SEFA na web: tela de importar ato do PDF ou do link da página do DOU.
    Toda a leitura do PDF e da página e a geração do Word acontecem no worker.js (Python/Pyodide). */
 "use strict";
 
@@ -25,8 +25,7 @@ const est = {
   motorPronto: false,
   ocupado: false,
   pdf: null,          // File
-  origem: "pdf",      // "pdf" (PDF do diário) ou "dou" (página do ato salva do DOU)
-  paginaDou: null,    // File (.mhtml ou .html)
+  origem: "pdf",      // "pdf" (PDF do diário) ou "dou" (link da página do ato no DOU)
   modelo: null,       // File (opcional)
   analise: null,      // último estado vindo do Python
   analisado: null,    // {origem, pdf, consulta, maxPaginas, pagina, link} usados na análise
@@ -172,8 +171,6 @@ async function executar(acao, dados, transferir) {
 }
 
 /* ---------------- passo 1: PDF ---------------- */
-const EXT_PAGINA = /\.(mhtml|mht|html?)$/i;
-
 /* "o PDF" ou "a página do DOU", conforme a origem da análise atual (ou da escolhida) */
 function fonte(a = est.analise) {
   const dou = a ? a.origem === "dou" : est.origem === "dou";
@@ -196,38 +193,12 @@ function mudarOrigem(origem) {
 }
 for (const r of document.querySelectorAll('input[name="origem"]')) r.addEventListener("change", () => mudarOrigem(r.value));
 
-function escolherPaginaDou(arquivo) {
-  if (!arquivo) return;
-  if (!EXT_PAGINA.test(arquivo.name)) {
-    $("analisar-erro").replaceChildren(caixaErro("Arquivo não aceito",
-      `${arquivo.name} não é uma página salva. No DOU, aperte Ctrl+S e salve como “Página da Web, arquivo único” (.mhtml).`));
-    return;
-  }
-  est.paginaDou = arquivo;
-  $("dou-nome").textContent = arquivo.name;
-  $("dou-tam").textContent = arquivo.size > 1048576 ? `${(arquivo.size / 1048576).toFixed(1).replace(".", ",")} MB`
-    : `${Math.max(1, Math.round(arquivo.size / 1024))} KB`;
-  $("soltar-dou").hidden = true;
-  $("dou-escolhido").hidden = false;
-  $("analisar-erro").replaceChildren();
-  if (est.origem !== "dou") mudarOrigem("dou");
-  atualizar();
-  $("analisar").focus();
-  if (!$("analisar").disabled) analisar();      // a página salva já basta: importa sem precisar de clique
-}
-$("arquivo-dou").addEventListener("change", (e) => { escolherPaginaDou(e.target.files[0]); e.target.value = ""; });
-$("trocar-dou").addEventListener("click", () => $("arquivo-dou").click());
-const soltarDou = $("soltar-dou");
-["dragenter", "dragover"].forEach((t) => soltarDou.addEventListener(t, (e) => { e.preventDefault(); soltarDou.classList.add("sobre"); }));
-["dragleave", "drop"].forEach((t) => soltarDou.addEventListener(t, () => soltarDou.classList.remove("sobre")));
-soltarDou.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); escolherPaginaDou(e.dataTransfer.files[0]); });
-
 const LINK_DOU = /^https?:\/\/(?:www\.)?in\.gov\.br\/(?:en\/)?web\/dou\/-\/\S+$/i;
 $("link-dou").addEventListener("input", atualizar);
 // como no Formatador CONFAZ: colou o link do ato, a importação começa sozinha
 $("link-dou").addEventListener("paste", () => setTimeout(() => {
   const link = $("link-dou").value.trim();
-  if (LINK_DOU.test(link) && !est.paginaDou && !$("analisar").disabled) analisar();
+  if (LINK_DOU.test(link) && !$("analisar").disabled) analisar();
 }, 0));
 $("link-dou").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("analisar").disabled) analisar(); });
 $("abrir-dou").addEventListener("click", () => {
@@ -243,7 +214,6 @@ $("abrir-dou").addEventListener("click", () => {
 
 function escolherPdf(arquivo) {
   if (!arquivo) return;
-  if (EXT_PAGINA.test(arquivo.name)) return escolherPaginaDou(arquivo);   // página salva solta na área do PDF
   if (!/\.pdf$/i.test(arquivo.name) && arquivo.type !== "application/pdf") {
     $("analisar-erro").replaceChildren(caixaErro("Arquivo não é PDF", `${arquivo.name} não parece ser um PDF do diário oficial.`));
     return;
@@ -268,7 +238,7 @@ document.addEventListener("dragover", (e) => e.preventDefault());
 document.addEventListener("drop", (e) => {
   e.preventDefault();
   // na aba Aplicar alterações, soltar fora das áreas próprias não escolhe o PDF do formatador
-  if (document.body.dataset.modo !== "consolidar" && e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]);   // PDF ou página salva
+  if (document.body.dataset.modo !== "consolidar" && e.dataTransfer.files[0]) escolherPdf(e.dataTransfer.files[0]);
 });
 
 /* ---------------- passo 2: analisar ---------------- */
@@ -279,18 +249,18 @@ $("analisar").addEventListener("click", analisar);
 
 function entradaAtual() {
   return { origem: est.origem, pdf: est.pdf, consulta: $("consulta").value.trim(), maxPaginas: $("max-paginas").value.trim(),
-    pagina: est.paginaDou, link: $("link-dou").value.trim() };
+    link: $("link-dou").value.trim() };
 }
 function analiseDesatualizada() {
   if (!est.analisado) return false;
   const a = entradaAtual();
   const b = est.analisado;
   if (a.origem !== b.origem) return true;
-  if (a.origem === "dou") return a.pagina !== b.pagina || (b.pagina ? false : a.link !== b.link);
+  if (a.origem === "dou") return a.link !== b.link;
   return a.pdf !== b.pdf || a.consulta !== b.consulta || a.maxPaginas !== b.maxPaginas;
 }
 
-/* Página do DOU, como no Formatador CONFAZ: o próprio navegador lê a página (pelo link ou salva) e separa só
+/* Página do DOU, como no Formatador CONFAZ: o próprio navegador lê a página pelo link e separa só
    o que interessa — a área do texto do ato e os dados de publicação. O Python recebe uma página pequena e limpa e
    aplica as regras da SEFA (estilos, tabelas, figuras, linha de publicação). A página inteira do portal (menus,
    scripts, estilos) não passa mais pelo Python do navegador.
@@ -375,8 +345,8 @@ function paginaEnxuta(html, link) {
   const area = areaDoAto(doc);
   const tudo = ((doc.body && doc.body.textContent) || "").replace(/\s+/g, " ");
   if (!area) {
-    return { erro: RECUSA_DOU.test(tudo) ? "O site do DOU recusou o acesso à página. Tente de novo mais tarde ou salve a página " +
-      "(no DOU, Ctrl+S, “Página da Web, arquivo único”) e arraste o arquivo para o passo 1."
+    return { erro: RECUSA_DOU.test(tudo) ? "O site do DOU recusou o acesso à página. Tente de novo em alguns minutos ou, se " +
+      "continuar, use o PDF do DOU (opção PDF do diário)."
       : "A página não tem o texto de um ato do DOU (área “texto-dou” não encontrada). Confira o link: deve ser a página " +
         "do ato, como https://www.in.gov.br/web/dou/-/medida-provisoria-n-1.399-de-4-de-novembro-de-2026-741754451" };
   }
@@ -427,130 +397,25 @@ async function baixarFiguras(fontes, base) {
   return figuras;
 }
 
-/* ---- página salva no computador ---- */
-function latin1(bytes) {
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
-  return s;
-}
-
-function bytesDe(texto) {
-  const b = new Uint8Array(texto.length);
-  for (let i = 0; i < texto.length; i++) b[i] = texto.charCodeAt(i) & 255;
-  return b;
-}
-
-function decodificar(bytes, charset) {
-  try { return new TextDecoder(charset || "utf-8").decode(bytes); } catch { return new TextDecoder("utf-8").decode(bytes); }
-}
-
-/* base64 tolerante, como o do Python: ignora o que vier depois do preenchimento "=" */
-function base64Bytes(texto) {
-  let b = texto.replace(/[^A-Za-z0-9+/=]/g, "");
-  try { return bytesDe(atob(b)); } catch { /* segue */ }
-  b = b.replace(/=.*$/, "");
-  b = b.slice(0, b.length - (b.length % 4 === 1 ? 1 : 0));
-  return bytesDe(atob(b + "===".slice(0, (4 - (b.length % 4)) % 4)));
-}
-
-function pareceMhtml(bytes) {
-  return /^(?:from:|mime-version|snapshot-content-location)/i.test(latin1(bytes.subarray(0, 300)).trimStart());
-}
-
-/* "Página da Web, arquivo único" (.mhtml) do Edge/Chrome: {html, url, figuras: {endereço: bytes}} */
-function lerMhtml(bytes) {
-  const texto = latin1(bytes);
-  const fimCab = texto.search(/\r?\n\r?\n/);
-  const cabecalho = texto.slice(0, fimCab).replace(/\r?\n[ \t]+/g, " ");
-  const limite = (/boundary="?([^";\r\n]+)"?/i.exec(cabecalho) || [])[1];
-  if (!limite) throw new Error("o arquivo .mhtml não tem as partes da página");
-  let url = ((/Snapshot-Content-Location:\s*(\S+)/i.exec(cabecalho) || [])[1] || "").trim();
-  let html = "";
-  const figuras = {};
-  for (const parte of texto.split("--" + limite).slice(1)) {
-    if (parte.startsWith("--")) break;
-    const corte = parte.search(/\r?\n\r?\n/);
-    if (corte < 0) continue;
-    const cab = parte.slice(0, corte).replace(/\r?\n[ \t]+/g, " ");
-    let corpo = parte.slice(corte).replace(/^\r?\n\r?\n/, "").replace(/\r?\n$/, "");
-    const tipo = ((/Content-Type:\s*([^;\r\n]+)/i.exec(cab) || [])[1] || "").trim().toLowerCase();
-    const codigo = ((/Content-Transfer-Encoding:\s*(\S+)/i.exec(cab) || [])[1] || "").toLowerCase();
-    const local = ((/Content-Location:\s*(\S+)/i.exec(cab) || [])[1] || "").trim();
-    let dados;
-    if (codigo === "base64") {
-      dados = base64Bytes(corpo);
-    } else if (codigo === "quoted-printable") {
-      corpo = corpo.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-      dados = bytesDe(corpo);
-    } else {
-      dados = bytesDe(corpo);
-    }
-    if (tipo === "text/html" && !html) {
-      html = decodificar(dados, ((/charset="?([\w-]+)/i.exec(cab) || [])[1] || "utf-8"));
-      if (!url) url = local;
-    } else if (tipo.startsWith("image/") && local) {
-      figuras[local] = dados;
-    }
-  }
-  if (!html) throw new Error("o arquivo .mhtml não tem a página do ato");
-  return { html, url, figuras };
-}
-
-function htmlSalvo(bytes) {
-  const inicio = latin1(bytes.subarray(0, 4096));
-  const charset = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(inicio) || [])[1];
-  return decodificar(bytes, charset || "utf-8");
-}
-
 async function analisarDou(entrada) {
-  let html = null;
-  let link = entrada.link;
-  let salvas = null;                    // figuras do .mhtml
   try {
-    if (entrada.pagina) {
-      const bruto = new Uint8Array(await entrada.pagina.arrayBuffer());
-      try {
-        if (/\.(mhtml|mht)$/i.test(entrada.pagina.name) || pareceMhtml(bruto)) {
-          const m = lerMhtml(bruto);
-          html = m.html;
-          salvas = m.figuras;
-          if (LINK_DOU.test(m.url)) link = m.url;
-        } else {
-          html = htmlSalvo(bruto);
-        }
-      } catch {
-        // formato que o navegador não reconheceu: o arquivo vai inteiro para o importador do programa (Python)
-        const dados = bruto.slice().buffer;
-        return await executar("analisarPagina", { pagina: dados, nome: entrada.pagina.name, link: entrada.link || "",
-          figuras: [], peloLink: false }, [dados]);
-      }
-    } else {
-      definirMotor("carregando", "Lendo o DOU");
-      html = await lerPaginaPeloLink(entrada.link);
-      if (!html) {
-        return { ok: false, erro: "Não consegui ler a página pelo link (o DOU e os intermediários não responderam). Clique em " +
-          "Abrir no DOU, aperte Ctrl+S na página do ato, salve como “Página da Web, arquivo único” (.mhtml) e arraste o " +
-          "arquivo para o passo 1." };
-      }
+    definirMotor("carregando", "Lendo o DOU");
+    const html = await lerPaginaPeloLink(entrada.link);
+    if (!html) {
+      return { ok: false, erro: "Não consegui ler a página pelo link: o DOU e os intermediários não responderam. Tente de novo " +
+        "em alguns minutos ou, se continuar, use o PDF do DOU (opção PDF do diário)." };
     }
-    const enx = paginaEnxuta(html, link);
+    const enx = paginaEnxuta(html, entrada.link);
     if (enx.erro) return { ok: false, erro: enx.erro };
-    link = enx.url;
     let figuras = [];
-    if (salvas) {
-      for (const src of enx.fontes) {
-        const url = absoluto(src, link);
-        const dados = salvas[url] || salvas[src] || salvas[url.replace(/^http:/, "https:")];
-        if (dados) figuras.push({ src, url, dados: dados.slice().buffer });
-      }
-    } else if (enx.fontes.length && link) {
+    if (enx.fontes.length) {
       definirMotor("carregando", "Baixando as figuras");
-      figuras = await baixarFiguras(enx.fontes, link);
+      figuras = await baixarFiguras(enx.fontes, enx.url);
     }
     const total = Math.min(enx.fontes.length, MAX_FIGURAS);
     const dados = new TextEncoder().encode(enx.html).buffer;
-    const r = await executar("analisarPagina", { pagina: dados, nome: "pagina_dou.html", link: link || "", figuras,
-      peloLink: !!link }, [dados, ...figuras.map((f) => f.dados)]);
+    const r = await executar("analisarPagina", { pagina: dados, nome: "pagina_dou.html", link: enx.url, figuras,
+      peloLink: true }, [dados, ...figuras.map((f) => f.dados)]);
     if (r && r.ok && total > figuras.length) r.figurasFaltando = total - figuras.length;
     return r;
   } catch (e) {
@@ -613,7 +478,7 @@ async function analisar() {
     $("analisar-erro").replaceChildren(h("div", { class: "erro-caixa aviso", role: "status" },
       h("strong", {}, n === 1 ? "Uma figura não veio" : `${n} figuras não vieram`),
       "O DOU não entregou " + (n === 1 ? "essa figura" : "essas figuras") + "; no Word sai a marca [FIGURA DO ATO] no lugar. " +
-      "Para trazê-las, salve a página do ato como “Página da Web, arquivo único” (.mhtml) e arraste o arquivo para o passo 1."));
+      "Clique em Abrir no DOU, copie a figura da página e cole-a no Word, no lugar da marca."));
   }
   desenharPrevia();
   atualizar();
@@ -1909,7 +1774,7 @@ window.addEventListener("beforeunload", (e) => {
 /* ---------------- estado dos botões ---------------- */
 function atualizar() {
   const entrada = entradaAtual();
-  const pronta = entrada.origem === "dou" ? !!(entrada.pagina || LINK_DOU.test(entrada.link)) : !!(entrada.pdf && entrada.consulta);
+  const pronta = entrada.origem === "dou" ? LINK_DOU.test(entrada.link) : !!(entrada.pdf && entrada.consulta);
   $("analisar").disabled = !est.motorPronto || est.ocupado || !pronta;
   $("analisar").textContent = est.ocupado ? "Processando…" : entrada.origem === "dou" ? "Importar a página do DOU" : "Analisar PDF";
   desenharConferencia();
@@ -1921,7 +1786,7 @@ function atualizar() {
   if (a) {
     lista = pendenciasParaGerar(a);
     if (analiseDesatualizada()) lista.unshift(est.origem === "dou" || a.origem === "dou"
-      ? "Importar de novo (a origem ou a página do DOU mudou)" : "Analisar o PDF de novo (o PDF ou o número do ato mudou)");
+      ? "Importar de novo (a origem ou o link mudou)" : "Analisar o PDF de novo (o PDF ou o número do ato mudou)");
   }
   $("gerar").disabled = !a || est.ocupado || lista.length > 0;
   $("editar").disabled = $("gerar").disabled;

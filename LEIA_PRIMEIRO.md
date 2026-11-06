@@ -1,6 +1,6 @@
 # Formatador SEFA 3.28.1, versão web
 
-O site tem duas abas no topo: **Formatar ato**, a tela Importar ato do Formatador SEFA (pelo PDF do diário ou pela página do ato no DOU), e **Aplicar alterações**, o Consolidador SEFA (veja a seção própria). As duas rodam inteiras no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
+O site tem duas abas no topo: **Formatar ato**, a tela Importar ato do Formatador SEFA (pelo PDF do diário ou pelo link da página do ato no DOU), e **Aplicar alterações**, o Consolidador SEFA (veja a seção própria). As duas rodam inteiras no navegador. O Python roda dentro da página com o Pyodide, no computador de quem a abre. Ninguém precisa instalar Python, rodar o INSTALAR.bat ou ter permissão de administrador. O PDF não é enviado para nenhum servidor.
 
 ## Testar no seu computador
 
@@ -73,7 +73,7 @@ Testes: no Python do computador e no do navegador, o exemplo fictício saiu igua
 As versões 3.25 a 3.28 do Formatador e 1.5 e 1.6 do Consolidador foram feitas a partir da 3.23 e da 1.4.1, sem as correções que estavam só no site (3.24 web, 1.4.2 e 1.4.3). Elas foram juntadas de novo: a **3.28.1** é a 3.28 com essas correções, e a **1.6.1** é a 1.6 com elas. Nada das versões novas foi retirado. Os módulos do site são os mesmos dos pacotes 3.28.1 e 1.6.1 do computador.
 
 Aba Formatar ato:
-- **Página do DOU.** No passo 1, escolha **PDF do diário** ou **Página do DOU**. Com a página do DOU, cole o link do ato (https://www.in.gov.br/web/dou/-/...) e clique em **Importar a página do DOU**. O navegador não deixa o site ler o in.gov.br direto, então a página e as figuras são lidas pelo intermediário público allorigins (`api.allorigins.win`), o mesmo do Formatador CONFAZ. Se o link não abrir, o site explica como salvar a página: no DOU, Ctrl+S, “Página da Web, arquivo único” (.mhtml), e arrastar o arquivo para o passo 1; o arquivo único traz as figuras. A página salva só em HTML também serve, mas sem as figuras. Figura que não vier sai no Word com a marca “[FIGURA DO ATO: …]”, e o site avisa.
+- **Página do DOU.** No passo 1, escolha **PDF do diário** ou **Página do DOU**. Com a página do DOU, cole o link do ato (https://www.in.gov.br/web/dou/-/...): a importação começa sozinha e a prévia aparece ao lado. O navegador não deixa o site ler o in.gov.br direto, então a página e as figuras são lidas pelos intermediários públicos allorigins e codetabs, os mesmos do Formatador CONFAZ. Se nenhum responder, o site avisa; nesse caso, tente de novo mais tarde ou use o PDF do DOU. Figura que não vier sai no Word com a marca “[FIGURA DO ATO: …]”, e o site avisa: copie a figura da página do DOU e cole no Word.
 - Da 3.25 à 3.28: tabelas e figuras de atos do DOU (também pelo PDF), Ato Técnico Conjunto, Emenda Constitucional e Decreto Legislativo estaduais e as demais correções do `ALTERACOES.txt` do programa.
 - A linha “(ANEXO I DA LEI …)” logo abaixo do anexo fica à parte do nome do anexo. Colada ao nome, fazia o título sumir quando o anexo era aplicado na aba Aplicar alterações.
 
@@ -83,16 +83,17 @@ Correção do site: **Validar correção** dava “'JsNull' object has no attrib
 
 Arquivos novos: `py/importar_dou.py`, `py/consolidador/annexes.py` e `py/consolidador/headings.py` (já na lista `ARQUIVOS` do `worker.js`). A `VERSAO` passou a `3.28.1-web3`.
 
-Testes: 38 atos (os de referência, os fictícios da 3.25 à 3.28 e os do kit didático) saíram idênticos no Python do computador e no do navegador. A página do DOU foi testada no navegador pelo link (com o intermediário simulado, com e sem a figura, e fora do ar), pela página salva em .mhtml e em .html, e o Word saiu igual ao do Python do computador. Na aba Aplicar alterações, o exemplo fictício e os casos reais (CF + EC 136/25, LC 123 + LC 238/26, Lei 5.530 + Lei 11.233/25) saíram iguais aos do programa, e o kit de exemplos didáticos refeito para a 1.6.1 passou inteiro na tela, sem contornos. Passaram os 240 testes do Formatador e os 138 do Consolidador.
+Testes: 38 atos (os de referência, os fictícios da 3.25 à 3.28 e os do kit didático) saíram idênticos no Python do computador e no do navegador. A página do DOU foi testada no navegador pelo link (com os intermediários simulados, com e sem a figura, com uma página com cara de portal, com o segundo intermediário e fora do ar), e o Word saiu igual ao do Python do computador. Na aba Aplicar alterações, o exemplo fictício e os casos reais (CF + EC 136/25, LC 123 + LC 238/26, Lei 5.530 + Lei 11.233/25) saíram iguais aos do programa, e o kit de exemplos didáticos refeito para a 1.6.1 passou inteiro na tela, sem contornos. Passaram os 240 testes do Formatador e os 138 do Consolidador.
 
 ### Ajustes depois da publicação (3.28.1-web3)
 
-- **Página do DOU lida como no Formatador CONFAZ.** Na página real do DOU, o Python do navegador falhava ("memory access out of bounds") ao ler a página inteira do portal. Agora o próprio navegador lê a página (pelo link, pela página salva em .html ou pelo arquivo único .mhtml), escolhe a área do texto do ato (`texto-dou`) e os dados de publicação, como o Formatador CONFAZ faz, e manda ao Python só essa parte, pequena e limpa. O Python aplica as regras da SEFA de sempre (estilos, tabelas, figuras, linha "Publicada no DOU de ..."). Nos testes, o resultado é o mesmo do programa do computador lendo a página inteira. Funções em `app.js`: `paginaEnxuta`, `areaDoAto`, `lerMhtml`. Um .mhtml que o navegador não reconheça vai inteiro para o importador do programa, como antes.
+- **Página do DOU lida como no Formatador CONFAZ.** Na página real do DOU, o Python do navegador falhava ("memory access out of bounds") ao ler a página inteira do portal. Agora o próprio navegador lê a página pelo link, escolhe a área do texto do ato (`texto-dou`) e os dados de publicação, como o Formatador CONFAZ faz, e manda ao Python só essa parte, pequena e limpa. O Python aplica as regras da SEFA de sempre (estilos, tabelas, figuras, linha "Publicada no DOU de ..."). Nos testes, o resultado é o mesmo do programa do computador lendo a página inteira. Funções em `app.js`: `paginaEnxuta` e `areaDoAto`.
 - **Dois intermediários**, como no Formatador CONFAZ: allorigins e, se ele falhar, codetabs, para a página e para as figuras.
-- **Importar ao colar.** Ao colar o link do ato (ou escolher a página salva), a importação começa sozinha.
+- **Importar ao colar.** Ao colar o link do ato, a importação começa sozinha, como no Formatador CONFAZ.
+- **Só pelo link.** A área para arrastar a página salva do DOU saiu da tela: a importação é só pelo link (ou pelo PDF do diário).
 - **Arquivos guardados pelo navegador.** O GitHub Pages deixa o navegador guardar os arquivos por 10 minutos. Logo depois de uma atualização, um `worker.js` antigo guardado, com os `.py` novos, dava "No module named 'importar_dou'". Agora o `app.js` sempre busca o `worker.js` publicado.
 - **Falha grave do Python do navegador:** a página reinicia o formatador sozinha, sem recarregar, e a mensagem mostra **Onde parou** (arquivo, linha e função do Python), para corrigir a causa.
-- No Python (`web_ponte.py`), a página também perde scripts, estilos, ícones, comentários e o caractere nulo antes da leitura (reserva para o .mhtml lido pelo programa).
+- No Python (`web_ponte.py`), a página também perde scripts, estilos, ícones, comentários e o caractere nulo antes da leitura (reserva).
 
 ## Consolidador 1.4.3 (lista de estilos completa)
 
@@ -175,7 +176,7 @@ Para o pacote caber num arquivo só, a biblioteca PyMuPDF (18 MB) não vem na pa
 
 **Gerar PDF.** O botão Gerar PDF, no passo 4 e no quadro do Word gerado, faz as mesmas conferências, monta as páginas e abre a janela de impressão: escolha **Salvar como PDF**, a pasta e o nome. Não é preciso abrir o editor antes.
 
-**Página do DOU.** O programa do computador lê o link direto no in.gov.br (ou pelo Edge/Chrome). O site não pode: o navegador bloqueia a leitura de outro domínio. Por isso o site lê pelo intermediário allorigins, um serviço público e gratuito que repassa a página; o link do ato passa por ele, e nada mais. Se ele estiver fora do ar ou o DOU o recusar, use a página salva (.mhtml).
+**Página do DOU.** O programa do computador lê o link direto no in.gov.br (ou pelo Edge/Chrome) e aceita a página salva. O site importa só pelo link e não pode ler o in.gov.br direto: o navegador bloqueia a leitura de outro domínio. Por isso o site lê pelos intermediários allorigins e codetabs, serviços públicos e gratuitos que repassam a página; o link do ato passa por eles, e nada mais. Se estiverem fora do ar ou o DOU os recusar, use o PDF do DOU.
 
 **Word.** O Word é baixado e não abre sozinho. O relatório de conferência, quando marcado, vem num botão à parte.
 
