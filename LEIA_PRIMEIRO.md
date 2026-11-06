@@ -34,7 +34,7 @@ O primeiro acesso baixa cerca de 41 MB (Python e bibliotecas). Nos seguintes, o 
 ## Atualizar para uma nova versão do formatador
 
 1. Copie para a pasta `py/` os novos `extrator_pdf.py`, `importar_pdf.py`, `importar_dou.py`, `formatador_sefa.py`, `links_no_word.py`, `links_legislacao.py`, `modelo_sefa.docx` e a `tabela_links.tsv` atualizada. Eles entram sem nenhuma alteração.
-2. Em `worker.js`, aumente o número em `const VERSAO = "3.28.1-web2";` (por exemplo, para `3.28.1-web3` ou `3.29-web1`). Assim os navegadores não usam os arquivos antigos guardados.
+2. Em `worker.js`, aumente o número em `const VERSAO = "3.28.1-web3";` (por exemplo, para `3.28.1-web4` ou `3.29-web1`). Assim os navegadores não usam os arquivos antigos guardados.
 3. Publique de novo.
 
 Se uma versão nova passar a importar outro módulo, acrescente o nome do arquivo à lista `ARQUIVOS` em `worker.js`.
@@ -81,9 +81,18 @@ Aba Aplicar alterações (1.5 e 1.6): anexo inteiro, nova redação de título d
 
 Correção do site: **Validar correção** dava “'JsNull' object has no attribute 'splitlines'” em qualquer proposta (o valor vazio das notas Vide chegava ao Python do navegador como JsNull). Corrigido em `worker.js` e `py/consolidador_ponte.py`.
 
-Arquivos novos: `py/importar_dou.py`, `py/consolidador/annexes.py` e `py/consolidador/headings.py` (já na lista `ARQUIVOS` do `worker.js`). A `VERSAO` passou a `3.28.1-web2`.
+Arquivos novos: `py/importar_dou.py`, `py/consolidador/annexes.py` e `py/consolidador/headings.py` (já na lista `ARQUIVOS` do `worker.js`). A `VERSAO` passou a `3.28.1-web3`.
 
 Testes: 38 atos (os de referência, os fictícios da 3.25 à 3.28 e os do kit didático) saíram idênticos no Python do computador e no do navegador. A página do DOU foi testada no navegador pelo link (com o intermediário simulado, com e sem a figura, e fora do ar), pela página salva em .mhtml e em .html, e o Word saiu igual ao do Python do computador. Na aba Aplicar alterações, o exemplo fictício e os casos reais (CF + EC 136/25, LC 123 + LC 238/26, Lei 5.530 + Lei 11.233/25) saíram iguais aos do programa, e o kit de exemplos didáticos refeito para a 1.6.1 passou inteiro na tela, sem contornos. Passaram os 240 testes do Formatador e os 138 do Consolidador.
+
+### Ajustes depois da publicação (3.28.1-web3)
+
+- **Página do DOU lida como no Formatador CONFAZ.** Na página real do DOU, o Python do navegador falhava ("memory access out of bounds") ao ler a página inteira do portal. Agora o próprio navegador lê a página (pelo link, pela página salva em .html ou pelo arquivo único .mhtml), escolhe a área do texto do ato (`texto-dou`) e os dados de publicação, como o Formatador CONFAZ faz, e manda ao Python só essa parte, pequena e limpa. O Python aplica as regras da SEFA de sempre (estilos, tabelas, figuras, linha "Publicada no DOU de ..."). Nos testes, o resultado é o mesmo do programa do computador lendo a página inteira. Funções em `app.js`: `paginaEnxuta`, `areaDoAto`, `lerMhtml`. Um .mhtml que o navegador não reconheça vai inteiro para o importador do programa, como antes.
+- **Dois intermediários**, como no Formatador CONFAZ: allorigins e, se ele falhar, codetabs, para a página e para as figuras.
+- **Importar ao colar.** Ao colar o link do ato (ou escolher a página salva), a importação começa sozinha.
+- **Arquivos guardados pelo navegador.** O GitHub Pages deixa o navegador guardar os arquivos por 10 minutos. Logo depois de uma atualização, um `worker.js` antigo guardado, com os `.py` novos, dava "No module named 'importar_dou'". Agora o `app.js` sempre busca o `worker.js` publicado.
+- **Falha grave do Python do navegador:** a página reinicia o formatador sozinha, sem recarregar, e a mensagem mostra **Onde parou** (arquivo, linha e função do Python), para corrigir a causa.
+- No Python (`web_ponte.py`), a página também perde scripts, estilos, ícones, comentários e o caractere nulo antes da leitura (reserva para o .mhtml lido pelo programa).
 
 ## Consolidador 1.4.3 (lista de estilos completa)
 

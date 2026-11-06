@@ -448,14 +448,14 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
 <body>
 <header class="topo">
   <h1>Formatador SEFA</h1>
-  <span class="sub" id="sub-modo">Importar ato do PDF do diário oficial</span>
+  <span class="sub" id="sub-modo">Importar ato do PDF do diário oficial ou da página do DOU</span>
   <div class="motor" id="motor" data-estado="carregando" role="status" aria-live="polite">
     <span class="ponto" aria-hidden="true"></span><span id="motor-texto">Preparando o formatador</span>
   </div>
 </header>
 <nav class="modos" role="tablist" aria-label="O que você quer fazer">
   <button class="modo" type="button" role="tab" id="aba-formatar" aria-controls="modo-formatar" aria-selected="true">
-    <strong>Formatar ato</strong><span>PDF do diário oficial → Word no padrão SEFA</span>
+    <strong>Formatar ato</strong><span>PDF ou página do DOU → Word no padrão SEFA</span>
   </button>
   <button class="modo" type="button" role="tab" id="aba-consolidar" aria-controls="modo-consolidar" aria-selected="false" tabindex="-1">
     <strong>Aplicar alterações</strong><span>Ato alterador → legislação atualizada no Word</span>
@@ -496,7 +496,7 @@ body.cons-ampliada::before { content: ""; position: fixed; inset: 0; z-index: 39
           <span class="nome"><span id="dou-nome"></span> <span class="tam" id="dou-tam"></span></span>
           <button class="ligacao" type="button" id="trocar-dou">Trocar</button>
         </div>
-        <p class="dica">Cole o link e clique em <b>Importar a página do DOU</b>: o site lê a página do ato e baixa as figuras (pelo intermediário público allorigins, porque o DOU não deixa sites lerem a página direto). Se não der certo, abra o ato no DOU, aperte <b>Ctrl+S</b>, salve como <b>“Página da Web, arquivo único”</b> (.mhtml, com as figuras) e arraste o arquivo aqui.</p>
+        <p class="dica">Cole o link e clique em <b>Importar a página do DOU</b>: o site lê a página do ato e baixa as figuras (pelos intermediários públicos allorigins e codetabs, como no Formatador CONFAZ, porque o DOU não deixa sites lerem a página direto). Se não der certo, abra o ato no DOU, aperte <b>Ctrl+S</b>, salve como <b>“Página da Web, arquivo único”</b> (.mhtml, com as figuras) e arraste o arquivo aqui.</p>
       </div>
     </section>
 

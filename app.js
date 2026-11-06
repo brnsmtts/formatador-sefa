@@ -88,9 +88,29 @@ if (location.protocol === "file:") {
 
 // worker.js sempre da versão publicada: o GitHub Pages deixa o navegador guardar os arquivos por 10 minutos, e um
 // worker.js antigo com os .py novos (que vêm sem cache) não acha os módulos novos ("No module named ...")
-const worker = new Worker(`worker.js?t=${Date.now()}`);
+let worker = null;
 let seq = 0;
 const pendentes = new Map();
+
+function criarMotor() {
+  worker = new Worker(`worker.js?t=${Date.now()}`);
+  worker.onmessage = aoMensagemMotor;
+  worker.onerror = (e) => {
+    definirMotor("falha", "O formatador não carregou");
+    console.error(e);
+  };
+}
+
+/* Depois de uma falha grave do Python do navegador (por exemplo, "memory access out of bounds"), aquele Python não
+   pode mais ser usado: a página cria outro, sem precisar recarregar. O que estava analisado precisa ser refeito. */
+function reiniciarMotor() {
+  try { worker.terminate(); } catch { /* já parado */ }
+  for (const p of pendentes.values()) p.rejeitar(new Error("O formatador foi reiniciado. Tente de novo."));
+  pendentes.clear();
+  est.motorPronto = false;
+  definirMotor("carregando", "Reiniciando o formatador");
+  criarMotor();
+}
 
 function pedir(acao, dados = {}, transferir = []) {
   return new Promise((resolver, rejeitar) => {
@@ -100,7 +120,7 @@ function pedir(acao, dados = {}, transferir = []) {
   });
 }
 
-worker.onmessage = ({ data }) => {
+function aoMensagemMotor({ data }) {
   if (data.tipo === "progresso") return definirMotor("carregando", data.texto);
   if (data.tipo === "pronto") {
     est.motorPronto = true;
@@ -126,12 +146,11 @@ worker.onmessage = ({ data }) => {
   const p = pendentes.get(data.id);
   if (!p) return;
   pendentes.delete(data.id);
-  data.ok ? p.resolver(data.resultado) : p.rejeitar(new Error(data.erro));
-};
-worker.onerror = (e) => {
-  definirMotor("falha", "O formatador não carregou");
-  console.error(e);
-};
+  if (data.ok) return p.resolver(data.resultado);
+  p.rejeitar(new Error(data.grave ? data.erro + "\nO formatador foi reiniciado; pode tentar de novo." : data.erro));
+  if (data.grave) reiniciarMotor();
+}
+criarMotor();
 
 function definirMotor(estado, texto) {
   $("motor").dataset.estado = estado;
@@ -194,6 +213,7 @@ function escolherPaginaDou(arquivo) {
   if (est.origem !== "dou") mudarOrigem("dou");
   atualizar();
   $("analisar").focus();
+  if (!$("analisar").disabled) analisar();      // a página salva já basta: importa sem precisar de clique
 }
 $("arquivo-dou").addEventListener("change", (e) => { escolherPaginaDou(e.target.files[0]); e.target.value = ""; });
 $("trocar-dou").addEventListener("click", () => $("arquivo-dou").click());
@@ -204,6 +224,11 @@ soltarDou.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagatio
 
 const LINK_DOU = /^https?:\/\/(?:www\.)?in\.gov\.br\/(?:en\/)?web\/dou\/-\/\S+$/i;
 $("link-dou").addEventListener("input", atualizar);
+// como no Formatador CONFAZ: colou o link do ato, a importação começa sozinha
+$("link-dou").addEventListener("paste", () => setTimeout(() => {
+  const link = $("link-dou").value.trim();
+  if (LINK_DOU.test(link) && !est.paginaDou && !$("analisar").disabled) analisar();
+}, 0));
 $("link-dou").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("analisar").disabled) analisar(); });
 $("abrir-dou").addEventListener("click", () => {
   const link = $("link-dou").value.trim();
@@ -265,11 +290,15 @@ function analiseDesatualizada() {
   return a.pdf !== b.pdf || a.consulta !== b.consulta || a.maxPaginas !== b.maxPaginas;
 }
 
-/* Página do DOU pelo link: o navegador não deixa o site ler o in.gov.br direto (CORS), então a leitura
-   tenta direto e, se o DOU recusar, pelo intermediário público allorigins (o mesmo do Formatador CONFAZ).
-   As figuras do ato são baixadas do mesmo jeito. Se nada der certo, a pessoa salva a página (.mhtml). */
-const INTERMEDIARIO = "https://api.allorigins.win/raw?url=";
+/* Página do DOU, como no Formatador CONFAZ: o próprio navegador lê a página (pelo link ou salva) e separa só
+   o que interessa — a área do texto do ato e os dados de publicação. O Python recebe uma página pequena e limpa e
+   aplica as regras da SEFA (estilos, tabelas, figuras, linha de publicação). A página inteira do portal (menus,
+   scripts, estilos) não passa mais pelo Python do navegador.
+   O navegador não deixa o site ler o in.gov.br direto (CORS): a leitura tenta direto e, se o DOU recusar, pelos
+   intermediários públicos allorigins e codetabs (os mesmos do Formatador CONFAZ). */
+const INTERMEDIARIOS = ["https://api.allorigins.win/raw?url=", "https://api.codetabs.com/v1/proxy/?quest="];
 const MAX_FIGURAS = 60;
+const RECUSA_DOU = /captcha|access denied|forbidden|bloquead|unusual traffic/i;
 
 async function buscarComPrazo(url, segundos) {
   const ctrl = new AbortController();
@@ -283,9 +312,13 @@ async function buscarComPrazo(url, segundos) {
   }
 }
 
-/* o texto da página do ato, direto ou pelo intermediário; null se não vier */
+function caminhos(url) {
+  return [url, ...INTERMEDIARIOS.map((i) => i + encodeURIComponent(url))];
+}
+
+/* o texto da página do ato, direto ou por um intermediário; null se não vier */
 async function lerPaginaPeloLink(link) {
-  for (const url of [link, INTERMEDIARIO + encodeURIComponent(link)]) {
+  for (const url of caminhos(link)) {
     try {
       const texto = await (await buscarComPrazo(url, url === link ? 15 : 40)).text();
       if (texto.includes("texto-dou")) return texto;
@@ -304,16 +337,77 @@ function enderecoFigura(img) {
   return src;
 }
 
-/* baixa as figuras do ato (as da área do texto); as que não vierem saem no Word com a marca [FIGURA DO ATO] */
-async function figurasPeloLink(html, link) {
+function absoluto(src, base) {
+  try { return new URL(src, base || "https://www.in.gov.br/").href; } catch { return ""; }
+}
+
+/* A área com o texto do ato. Havendo mais de uma (cópia escondida, versão de impressão), fica a que tem o título
+   do ato ("identifica"), mais tabelas e figuras e mais texto — a mesma escolha do importador do programa. */
+function areaDoAto(doc) {
+  let cand = [...doc.querySelectorAll(".texto-dou")];
+  if (!cand.length) cand = [...doc.querySelectorAll("[class*='texto-dou']")];
+  if (!cand.length) cand = [...doc.querySelectorAll(".single-full-dou-content, #materia")];
+  const nota = (el) => [el.querySelector(".identifica") ? 1 : 0, el.querySelectorAll("table").length,
+    el.querySelectorAll("img").length, (el.textContent || "").length];
+  const maior = (a, b) => {                 // comparação em ordem: título, tabelas, figuras, texto
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
+    return false;
+  };
+  let melhor = null;
+  let notaMelhor = null;
+  for (const el of cand) {
+    const n = nota(el);
+    if (!melhor || maior(n, notaMelhor)) {
+      melhor = el;
+      notaMelhor = n;
+    }
+  }
+  return melhor;
+}
+
+function escAttr(t) {
+  return String(t).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/* {html, url, fontes} com a página enxuta, ou {erro} */
+function paginaEnxuta(html, link) {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  let imgs = [...doc.querySelectorAll(".texto-dou img, [class*='texto-dou'] img")];
-  if (!imgs.length) imgs = [...doc.querySelectorAll(".single-full-dou-content img, #materia img")];
-  const fontes = [...new Set(imgs.map(enderecoFigura).filter((s) => s && !s.startsWith("data:")))].slice(0, MAX_FIGURAS);
+  const area = areaDoAto(doc);
+  const tudo = ((doc.body && doc.body.textContent) || "").replace(/\s+/g, " ");
+  if (!area) {
+    return { erro: RECUSA_DOU.test(tudo) ? "O site do DOU recusou o acesso à página. Tente de novo mais tarde ou salve a página " +
+      "(no DOU, Ctrl+S, “Página da Web, arquivo único”) e arraste o arquivo para o passo 1."
+      : "A página não tem o texto de um ato do DOU (área “texto-dou” não encontrada). Confira o link: deve ser a página " +
+        "do ato, como https://www.in.gov.br/web/dou/-/medida-provisoria-n-1.399-de-4-de-novembro-de-2026-741754451" };
+  }
+  const canonico = (doc.querySelector('link[rel="canonical"]') || {}).getAttribute?.("href") ||
+    (doc.querySelector('meta[property="og:url"]') || {}).getAttribute?.("content") || "";
+  const noTexto = (/https?:\/\/(?:www\.)?in\.gov\.br\/(?:en\/)?web\/dou\/-\/[^\s"'<>]+/i.exec(html) || [""])[0];
+  const url = [link || "", canonico, noTexto].find((u) => LINK_DOU.test(u)) || "";
+  const copia = area.cloneNode(true);
+  copia.querySelectorAll("script, style, noscript, template, iframe, svg, object, button, form").forEach((e) => e.remove());
+  const fontes = [...new Set([...copia.querySelectorAll("img")].map(enderecoFigura).filter((s) => s && !s.startsWith("data:")))];
+  // dados de publicação: pelas classes da página e, como reserva, o trecho "Publicado em: ... | Edição: ..." do texto
+  const cab = ["publicado-dou-data", "edicao-dou-data", "secao-dou", "secao-dou-data", "orgao-dou-data"]
+    .map((c) => doc.querySelector("." + c)).filter(Boolean)
+    .map((el) => `<span class="${[...el.classList].filter((c) => /dou/.test(c)).join(" ")}">${escAttr(el.textContent.trim())}</span>`)
+    .join(" | ");
+  const i = tudo.search(/Publicado em\s*:/i);
+  const resumo = i >= 0 ? tudo.slice(i, i + 400) : "";
+  return {
+    url, fontes,
+    html: `<!DOCTYPE html><html><head><meta charset="utf-8"><title>DOU</title>` +
+      (url ? `<link rel="canonical" href="${escAttr(url)}">` : "") + `</head><body>` +
+      `<div class="detalhes-dou"><p>${cab}</p><p>${escAttr(resumo)}</p></div>` + copia.outerHTML + `</body></html>`,
+  };
+}
+
+/* baixa as figuras do ato; as que não vierem saem no Word com a marca [FIGURA DO ATO] */
+async function baixarFiguras(fontes, base) {
   const baixar = async (src) => {
-    let url;
-    try { url = new URL(src, link).href; } catch { return null; }
-    for (const via of [url, INTERMEDIARIO + encodeURIComponent(url)]) {
+    const url = absoluto(src, base);
+    if (!url) return null;
+    for (const via of caminhos(url)) {
       try {
         const resp = await buscarComPrazo(via, via === url ? 10 : 30);
         const tipo = resp.headers.get("content-type") || "";
@@ -325,47 +419,144 @@ async function figurasPeloLink(html, link) {
     return null;
   };
   const figuras = [];
-  for (let i = 0; i < fontes.length; i += 4) {
-    const lote = await Promise.all(fontes.slice(i, i + 4).map(baixar));
+  const lista = fontes.slice(0, MAX_FIGURAS);
+  for (let i = 0; i < lista.length; i += 4) {
+    const lote = await Promise.all(lista.slice(i, i + 4).map(baixar));
     figuras.push(...lote.filter(Boolean));
   }
-  return { figuras, total: fontes.length };
+  return figuras;
+}
+
+/* ---- página salva no computador ---- */
+function latin1(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+  return s;
+}
+
+function bytesDe(texto) {
+  const b = new Uint8Array(texto.length);
+  for (let i = 0; i < texto.length; i++) b[i] = texto.charCodeAt(i) & 255;
+  return b;
+}
+
+function decodificar(bytes, charset) {
+  try { return new TextDecoder(charset || "utf-8").decode(bytes); } catch { return new TextDecoder("utf-8").decode(bytes); }
+}
+
+/* base64 tolerante, como o do Python: ignora o que vier depois do preenchimento "=" */
+function base64Bytes(texto) {
+  let b = texto.replace(/[^A-Za-z0-9+/=]/g, "");
+  try { return bytesDe(atob(b)); } catch { /* segue */ }
+  b = b.replace(/=.*$/, "");
+  b = b.slice(0, b.length - (b.length % 4 === 1 ? 1 : 0));
+  return bytesDe(atob(b + "===".slice(0, (4 - (b.length % 4)) % 4)));
+}
+
+function pareceMhtml(bytes) {
+  return /^(?:from:|mime-version|snapshot-content-location)/i.test(latin1(bytes.subarray(0, 300)).trimStart());
+}
+
+/* "Página da Web, arquivo único" (.mhtml) do Edge/Chrome: {html, url, figuras: {endereço: bytes}} */
+function lerMhtml(bytes) {
+  const texto = latin1(bytes);
+  const fimCab = texto.search(/\r?\n\r?\n/);
+  const cabecalho = texto.slice(0, fimCab).replace(/\r?\n[ \t]+/g, " ");
+  const limite = (/boundary="?([^";\r\n]+)"?/i.exec(cabecalho) || [])[1];
+  if (!limite) throw new Error("o arquivo .mhtml não tem as partes da página");
+  let url = ((/Snapshot-Content-Location:\s*(\S+)/i.exec(cabecalho) || [])[1] || "").trim();
+  let html = "";
+  const figuras = {};
+  for (const parte of texto.split("--" + limite).slice(1)) {
+    if (parte.startsWith("--")) break;
+    const corte = parte.search(/\r?\n\r?\n/);
+    if (corte < 0) continue;
+    const cab = parte.slice(0, corte).replace(/\r?\n[ \t]+/g, " ");
+    let corpo = parte.slice(corte).replace(/^\r?\n\r?\n/, "").replace(/\r?\n$/, "");
+    const tipo = ((/Content-Type:\s*([^;\r\n]+)/i.exec(cab) || [])[1] || "").trim().toLowerCase();
+    const codigo = ((/Content-Transfer-Encoding:\s*(\S+)/i.exec(cab) || [])[1] || "").toLowerCase();
+    const local = ((/Content-Location:\s*(\S+)/i.exec(cab) || [])[1] || "").trim();
+    let dados;
+    if (codigo === "base64") {
+      dados = base64Bytes(corpo);
+    } else if (codigo === "quoted-printable") {
+      corpo = corpo.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+      dados = bytesDe(corpo);
+    } else {
+      dados = bytesDe(corpo);
+    }
+    if (tipo === "text/html" && !html) {
+      html = decodificar(dados, ((/charset="?([\w-]+)/i.exec(cab) || [])[1] || "utf-8"));
+      if (!url) url = local;
+    } else if (tipo.startsWith("image/") && local) {
+      figuras[local] = dados;
+    }
+  }
+  if (!html) throw new Error("o arquivo .mhtml não tem a página do ato");
+  return { html, url, figuras };
+}
+
+function htmlSalvo(bytes) {
+  const inicio = latin1(bytes.subarray(0, 4096));
+  const charset = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(inicio) || [])[1];
+  return decodificar(bytes, charset || "utf-8");
 }
 
 async function analisarDou(entrada) {
-  let dados = null;
-  let nome = "pagina_dou.html";
-  let figuras = [];
-  let total = 0;
-  if (entrada.pagina) {
-    nome = entrada.pagina.name;
-    dados = await entrada.pagina.arrayBuffer();
-  } else {
-    let html = null;
-    try {
+  let html = null;
+  let link = entrada.link;
+  let salvas = null;                    // figuras do .mhtml
+  try {
+    if (entrada.pagina) {
+      const bruto = new Uint8Array(await entrada.pagina.arrayBuffer());
+      try {
+        if (/\.(mhtml|mht)$/i.test(entrada.pagina.name) || pareceMhtml(bruto)) {
+          const m = lerMhtml(bruto);
+          html = m.html;
+          salvas = m.figuras;
+          if (LINK_DOU.test(m.url)) link = m.url;
+        } else {
+          html = htmlSalvo(bruto);
+        }
+      } catch {
+        // formato que o navegador não reconheceu: o arquivo vai inteiro para o importador do programa (Python)
+        const dados = bruto.slice().buffer;
+        return await executar("analisarPagina", { pagina: dados, nome: entrada.pagina.name, link: entrada.link || "",
+          figuras: [], peloLink: false }, [dados]);
+      }
+    } else {
       definirMotor("carregando", "Lendo o DOU");
       html = await lerPaginaPeloLink(entrada.link);
-      if (html) {
-        definirMotor("carregando", "Baixando as figuras");
-        ({ figuras, total } = await figurasPeloLink(html, entrada.link));
+      if (!html) {
+        return { ok: false, erro: "Não consegui ler a página pelo link (o DOU e os intermediários não responderam). Clique em " +
+          "Abrir no DOU, aperte Ctrl+S na página do ato, salve como “Página da Web, arquivo único” (.mhtml) e arraste o " +
+          "arquivo para o passo 1." };
       }
-    } finally {
-      definirMotor(est.motorPronto ? "pronto" : "carregando", est.motorPronto ? "Pronto" : "Carregando");
     }
-    if (!html) {
-      return { ok: false, erro: "Não consegui ler a página pelo link (o DOU ou o intermediário não responderam). Clique em " +
-        "Abrir no DOU, aperte Ctrl+S na página do ato, salve como “Página da Web, arquivo único” (.mhtml) e arraste o " +
-        "arquivo para o passo 1." };
+    const enx = paginaEnxuta(html, link);
+    if (enx.erro) return { ok: false, erro: enx.erro };
+    link = enx.url;
+    let figuras = [];
+    if (salvas) {
+      for (const src of enx.fontes) {
+        const url = absoluto(src, link);
+        const dados = salvas[url] || salvas[src] || salvas[url.replace(/^http:/, "https:")];
+        if (dados) figuras.push({ src, url, dados: dados.slice().buffer });
+      }
+    } else if (enx.fontes.length && link) {
+      definirMotor("carregando", "Baixando as figuras");
+      figuras = await baixarFiguras(enx.fontes, link);
     }
-    dados = new TextEncoder().encode(html).buffer;
-  }
-  try {
-    const r = await executar("analisarPagina", { pagina: dados, nome, link: entrada.link, figuras, peloLink: !entrada.pagina },
-      [dados, ...figuras.map((f) => f.dados)]);
+    const total = Math.min(enx.fontes.length, MAX_FIGURAS);
+    const dados = new TextEncoder().encode(enx.html).buffer;
+    const r = await executar("analisarPagina", { pagina: dados, nome: "pagina_dou.html", link: link || "", figuras,
+      peloLink: !!link }, [dados, ...figuras.map((f) => f.dados)]);
     if (r && r.ok && total > figuras.length) r.figurasFaltando = total - figuras.length;
     return r;
   } catch (e) {
     return { ok: false, erro: e.message };
+  } finally {
+    definirMotor(est.motorPronto ? "pronto" : "carregando", est.motorPronto ? "Pronto" : "Carregando");
   }
 }
 

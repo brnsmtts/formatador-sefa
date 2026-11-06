@@ -24,7 +24,7 @@ const MSG_DOC = "O navegador não consegue converter arquivos .doc (formato anti
 
 /* ---------------- abas do topo ---------------- */
 const MODOS = {
-  formatar: { aba: "aba-formatar", painel: "modo-formatar", sub: "Importar ato do PDF do diário oficial",
+  formatar: { aba: "aba-formatar", painel: "modo-formatar", sub: "Importar ato do PDF do diário oficial ou da página do DOU",
     titulo: "Formatador SEFA · importar ato do PDF" },
   consolidar: { aba: "aba-consolidar", painel: "modo-consolidar", sub: "Inserir na legislação as alterações de um ato",
     titulo: "Formatador SEFA · aplicar alterações" },

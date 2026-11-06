@@ -4,7 +4,7 @@
    Ao atualizar o programa: copie os .py novos para a pasta py/ e aumente VERSAO,
    para que os navegadores não usem os arquivos antigos guardados em cache. */
 
-const VERSAO = "3.28.1-web2";
+const VERSAO = "3.28.1-web3";
 
 // Módulos do programa do computador (sem alteração) + a ponte com a página
 const ARQUIVOS = [
@@ -45,13 +45,34 @@ let py = null;
 let ponte = null;
 const base = new URL("./", self.location).href;
 
+// Saída de erro do Python: quando o Python do navegador sofre uma falha grave ("memory access out of bounds"),
+// o Pyodide escreve ali a pilha de chamadas. As últimas linhas vão junto com o aviso, para saber onde parou.
+const SAIDA_ERRO = [];
+function guardarSaida(linha) {
+  SAIDA_ERRO.push(String(linha));
+  if (SAIDA_ERRO.length > 120) SAIDA_ERRO.shift();
+  console.log(linha);
+}
+function guardarSaidaErro(linha) {
+  SAIDA_ERRO.push(String(linha));
+  if (SAIDA_ERRO.length > 120) SAIDA_ERRO.shift();
+  console.warn(linha);
+}
+const FALHA_GRAVE = /memory access out of bounds|unreachable|call stack size|fatally failed|fatal error|null function|table index/i;
+function ondeParou() {
+  const inicio = SAIDA_ERRO.findLastIndex((l) => /Stack \(most recent call first\)/.test(l));
+  const linhas = (inicio >= 0 ? SAIDA_ERRO.slice(inicio + 1) : SAIDA_ERRO).filter((l) => /File "/.test(l));
+  return linhas.slice(0, 10).map((l) => l.trim().replace(/^File "\/formatador\//, "").replace(/^File "/, "").replace(/"/, ""))
+    .join("\n");
+}
+
 function progresso(texto) {
   self.postMessage({ tipo: "progresso", texto });
 }
 
 async function iniciar() {
   progresso("Carregando o Python");
-  py = await loadPyodide({ indexURL: base + "pyodide/" });
+  py = await loadPyodide({ indexURL: base + "pyodide/", stdout: guardarSaida, stderr: guardarSaidaErro });
   const pymupdf = await origemPyMuPDF();
   progresso(pymupdf.local ? "Carregando as bibliotecas de PDF e Word"
     : "Carregando as bibliotecas de PDF e Word (o PyMuPDF vem do PyPI; na primeira vez, são 18 MB)");
@@ -302,7 +323,13 @@ self.onmessage = async ({ data }) => {
     const resultado = await acoes[acao](dados || {});
     self.postMessage({ id, ok: true, resultado });
   } catch (erro) {
-    self.postMessage({ id, ok: false, erro: String(erro && erro.message ? erro.message : erro) });
+    const mensagem = String(erro && erro.message ? erro.message : erro);
+    const grave = FALHA_GRAVE.test(mensagem);
+    const pilha = grave ? ondeParou() : "";
+    // depois de uma falha grave o Python deste worker não pode mais ser usado: a página cria outro
+    self.postMessage({ id, ok: false, grave, erro: grave
+      ? `O Python do navegador falhou ao processar (${mensagem}).` + (pilha ? `\nOnde parou:\n${pilha}` : "")
+      : mensagem });
   }
 };
 

@@ -613,6 +613,18 @@ def _figuras_baixadas(indice: str) -> None:
                 dou.FIGURAS_SALVAS[chave] = dados
 
 
+_SEM_TEXTO_DO_ATO = re.compile(r"<(script|style|noscript|template|svg|iframe|object)\b[^>]*>.*?</\1\s*>", re.I | re.S)
+
+
+def _html_enxuto(html: str) -> str:
+    """A página do portal do DOU sem o que não é texto do ato (scripts, estilos, ícones, comentários) e sem o
+    caractere nulo, que faz o leitor de HTML parar no meio. O Python do navegador trabalha só com o necessário;
+    o resultado é o mesmo, porque o importador já ignora essas partes."""
+    html = html.replace("\x00", "")
+    html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    return _SEM_TEXTO_DO_ATO.sub("", html)
+
+
 def analisar_pagina(caminho: str, link: str = "", figuras: str = "", pelo_link: bool = False) -> str:
     """Importação pelo DOU: a página do ato salva no computador (Ctrl+S no Edge/Chrome), em .mhtml
     (arquivo único, com as figuras) ou .html, ou a página que o site leu pelo link (pelo_link), com as
@@ -626,7 +638,7 @@ def analisar_pagina(caminho: str, link: str = "", figuras: str = "", pelo_link: 
         if pelo_link and link:
             url = link
         _figuras_baixadas(figuras)
-        pagina = dou.ler_pagina(html, url or link)
+        pagina = dou.ler_pagina(_html_enxuto(html), url or link)
         e = dou.extrair_pagina(pagina, obter_imagem=_figura_da_pagina)
         ESTADO["pdf"] = None
         ESTADO["extracao"] = e
